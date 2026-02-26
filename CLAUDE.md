@@ -194,20 +194,20 @@ gameData = {
 
 ### Movement
 - Left stick moves the plane; right stick sets the aim angle (red dashed line from nose)
-- Max speed: `55 + (plane.speed / 100) * 165` px/s
+- Max movement speed: `(plane.speed / 100) * 220` px/s
 - Stick responsiveness: `(plane.maneuverability / 100) * 10 + 4`
-- Velocity smooths toward stick input each frame; position clamped 30px from edges
-- Plane angle rotates to face velocity direction
+- Velocity smooths toward stick input each frame; position clamped to plane half-size from all edges
+- Plane angle rotates to face velocity direction when speed > 15 px/s
 
 ### Scrolling Ground (already implemented)
 A seamless looping ground tile (960px wide) scrolls left as the plane flies:
 - `_groundOffset` accumulates distance scrolled
-- Scroll speed matches the plane's max speed stat
+- Scroll speed: `55 + (plane.speed / 100) * 165` px/s (ranges from 55 → 220 px/s)
 - Two tiles drawn with modulo wrapping to create an invisible seam
 
 Ground features built by `_buildGroundFeatures()` — all positioned in 0–960 tile space:
 - 2 road strips with center-line dashes
-- 8 bomb craters (ellipses with sandy ejecta rings)
+- 8 bomb craters (flat rectangles: outer sandy ejecta ring + inner dark pit — no ellipses)
 - 5 scorched/burned patches
 - 3 sandy texture patches
 - 4 rubble piles (small rectangle clusters)
@@ -237,13 +237,13 @@ Ground features built by `_buildGroundFeatures()` — all positioned in 0–960 
 ### style.css
 - Global reset: margin/padding/box-sizing on all elements
 - `html, body`: 100% size, black background, flexbox centering, `overflow: hidden`, zoom disabled
-- Canvas: `image-rendering: pixelated` (sharp scaling), `cursor: crosshair`
+- Canvas: `image-rendering: crisp-edges` (Firefox) + `image-rendering: pixelated` (Chrome/Safari) for sharp pixel scaling, `cursor: crosshair`
 - **Portrait orientation overlay**: `@media screen and (orientation: portrait)` shows "↻ Please rotate your device to landscape" — the game requires landscape
 
 ### index.html Meta Tags (iOS critical)
 - `viewport`: `user-scalable=no` — prevents pinch-zoom breaking input
 - `apple-mobile-web-app-capable`: enables full-screen when added to iOS home screen
-- `apple-mobile-web-app-status-bar-style: black-translucent` — immersive status bar
+- `apple-mobile-web-app-status-bar-style: black-fullscreen` — immersive status bar
 - `format-detection: telephone=no` — prevents phone-number link detection
 
 ---
@@ -252,7 +252,7 @@ Ground features built by `_buildGroundFeatures()` — all positioned in 0–960 
 
 - **Default branch**: `master`
 - **Feature branches**: `claude/<task-slug>`
-- **Active branch**: `claude/claude-md-mm2urte7aivbwqco-WxGdl`
+- **Active branch**: `claude/claude-md-mm2vwmrxe931ydtt-YwkRD`
 - Never push to `master` without explicit permission
 - Commit messages: imperative, one logical change per commit
 - Push with: `git push -u origin <branch-name>`
@@ -318,12 +318,15 @@ These are the recommended next steps to turn this foundation into a playable gam
 - **No build step** — edit files, refresh browser, that's it
 - **No external libraries** — keep it dependency-free unless there's a compelling reason
 - **`_drawButton` is a global helper** defined at the bottom of `MainMenuState.js` — all state files can call it since it loads first among the states
+- **`_drawHUDButton` is a file-scoped helper** defined at the bottom of `PilotGameState.js` — it is only available within that file; do not call it from other states (use `_drawButton` or define a local equivalent instead)
 - **Script load order matters** — `index.html` loads files in dependency order; add new scripts in the right place
 - **gameData is the inter-state bus** — store anything that needs to survive a state transition there
 - **All coordinates are in game space (960×540)** — never use `window.innerWidth/Height` in game logic
 - **`input.clearTaps()` must be called at the end of every `update()`** — failing to do so causes taps to persist across frames
 - **`ctx.save()` / `ctx.restore()` around every transform** — prevents cascading matrix bugs
 - **Death callbacks use `setTimeout(800ms)`** — brief delay before transitioning to GameOverState; `_gameOverPending` flag prevents duplicate triggers
+- **`ctx.imageSmoothingEnabled = false` is currently only set in `PilotGameState.render()`** — it is missing from `GunnerGameState`, `MainMenuState`, `PlaneSelectState`, `GameOverState`, and `Plane.render()`. Any new `render()` method must set it at the very top.
+- **`GunnerGameState` does not yet follow the Visual Style Guide** — its sky uses `createLinearGradient` and its gun turret uses `ctx.arc()`, both violating Style Guide rules 1 and 4. These should be converted to flat-band `fillRect` equivalents when refactoring that state.
 - **`window.game`** is exposed in `main.js` for browser console debugging: `game.stateManager`, `game.input`, `game.gameLoop`, `game.gameData`
 - Avoid adding unrequested scaffolding, dependencies, or "improvements" beyond the task at hand
 - Update this `CLAUDE.md` whenever the folder structure, conventions, or systems change significantly
