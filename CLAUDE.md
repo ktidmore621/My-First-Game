@@ -40,10 +40,23 @@ My-First-Game/
     └── states/
         ├── MainMenuState.js      ← Title screen; PILOT MODE / GUNNER MODE buttons
         ├── PlaneSelectState.js   ← Card-based plane chooser (3 planes, 4 stat bars each)
-        ├── PilotGameState.js     ← Pilot gameplay: movement, aim, HUD, placeholder enemies
+        ├── PilotGameState.js     ← Pilot gameplay: movement, scrolling ground, aim, HUD
         ├── GunnerGameState.js    ← Gunner gameplay: rotating gun aim, FIRE button, HUD
         └── GameOverState.js      ← Result screen; PLAY AGAIN / MAIN MENU buttons
 ```
+
+---
+
+## Script Load Order
+
+The order of `<script>` tags in `index.html` is **critical** — there is no module system. Files must be loaded after their dependencies:
+
+1. **Foundation** (no dependencies): `HealthSystem.js`, `StateManager.js`
+2. **Systems** (depend on foundation): `GameLoop.js`, `InputHandler.js`, `Plane.js`
+3. **Game Screens** (depend on systems): All state files (`MainMenuState.js` → `GameOverState.js`)
+4. **Entry Point** (ties everything together): `main.js`
+
+When adding a new script, add its `<script>` tag in the right position — after everything it depends on, and before anything that depends on it.
 
 ---
 
@@ -80,10 +93,14 @@ Every state implements four methods:
 ### GameLoop (`js/engine/GameLoop.js`)
 Uses `requestAnimationFrame`. Calculates delta time (`dt`) in seconds each frame. Caps `dt` at `1/20s` to prevent physics explosions after tab-background pauses. Calls `stateManager.update(dt)` then `stateManager.render(ctx)`.
 
+- `start()` — begins the loop
+- `stop()` — cancels the loop (for native iOS transitions)
+
 ### StateManager (`js/engine/StateManager.js`)
 - `change(state)` — replace everything with a new state (most common)
 - `push(state)` — add state on top (use for pause screens / overlays)
 - `pop()` — go back to the previous state
+- `isActive(StateClass)` — check if a specific state type is current
 
 ### InputHandler (`js/input/InputHandler.js`)
 - `input.leftStick`  — `{ active, x, y, baseX, baseY }` — x/y range: -1 to +1
@@ -93,7 +110,9 @@ Uses `requestAnimationFrame`. Calculates delta time (`dt`) in seconds each frame
 - `input.clearTaps()` — **call this at the end of every state's `update()`**
 - `input.renderSticks(ctx)` — draws the thumbstick visuals; call from `render()`
 
-Touch events use the left/right screen halves for left/right sticks. Mouse events work the same way (for desktop testing).
+Internal constants: `STICK_RADIUS = 65` (max thumb travel), `TAP_MAX_DISTANCE = 15` (drag threshold).
+
+Touch events use the left/right screen halves for left/right sticks. Mouse events work the same way (for desktop testing). Multi-touch is tracked by `touch.identifier` so each finger is independent.
 
 ### HealthSystem (`js/entities/HealthSystem.js`)
 ```javascript
@@ -105,6 +124,8 @@ hp.isAlive();                          // → true
 hp.onDeath(() => console.log('dead')); // callback
 hp.renderBar(ctx, x, y, width, height);
 ```
+
+Health bar color transitions: Green (full) → Yellow (half) → Red (critical).
 
 ### Plane (`js/entities/Plane.js`)
 ```javascript
@@ -124,6 +145,20 @@ The four stats (all 0–100):
 
 ---
 
+## Plane Definitions (PlaneSelectState)
+
+Three aircraft are defined in `PlaneSelectState.js` and created fresh on each visit to that screen:
+
+| Name | Color | Speed | Durability | Weapon | Maneuver | Profile |
+|---|---|---|---|---|---|---|
+| **Fighter** | Blue `#42a5f5` | 82 | 55 | 65 | 90 | Fast & agile, fragile |
+| **Bomber** | Gray `#78909c` | 42 | 95 | 95 | 35 | Slow, tough, powerful |
+| **Scout** | Green `#66bb6a` | 95 | 38 | 42 | 96 | Fastest/most agile, weakest |
+
+When the player taps "FLY!", the selected plane is reset to position `(100, 270)` and stored in `gameData.selectedPlane`, then `PilotGameState` is entered.
+
+---
+
 ## Shared gameData Object
 
 A plain object passed through every state constructor, holding cross-state information:
@@ -139,11 +174,69 @@ gameData = {
 
 ---
 
+## PilotGameState — Key Details
+
+### Movement
+- Left stick moves the plane; right stick sets the aim angle (red dashed line from nose)
+- Max speed: `55 + (plane.speed / 100) * 165` px/s
+- Stick responsiveness: `(plane.maneuverability / 100) * 10 + 4`
+- Velocity smooths toward stick input each frame; position clamped 30px from edges
+- Plane angle rotates to face velocity direction
+
+### Scrolling Ground (already implemented)
+A seamless looping ground tile (960px wide) scrolls left as the plane flies:
+- `_groundOffset` accumulates distance scrolled
+- Scroll speed matches the plane's max speed stat
+- Two tiles drawn with modulo wrapping to create an invisible seam
+
+Ground features built by `_buildGroundFeatures()` — all positioned in 0–960 tile space:
+- 2 road strips with center-line dashes
+- 8 bomb craters (ellipses with sandy ejecta rings)
+- 5 scorched/burned patches
+- 3 sandy texture patches
+- 4 rubble piles (small rectangle clusters)
+
+### Game-Over Triggers
+- Plane health reaches zero → 800ms delay → GameOverState (`'defeated'`)
+- 30-second timer elapses → GameOverState (placeholder; score = `elapsed * 10`)
+
+### Placeholder Buttons
+"WEAPON SELECT" and "EVADE" (bottom-right) currently only log to the console — they are stubs for future implementation.
+
+---
+
+## GunnerGameState — Key Details
+
+- Right stick rotates the gun barrel; aim is clamped to the upper hemisphere (can't aim into the ground)
+- "FIRE" button (bottom-right) is a placeholder — logs aim angle to console
+- Gun health: 150 HP; destruction triggers GameOverState (`'defeated'`)
+- "← Back" button (top-left) returns to MainMenuState
+- Aim angle readout in degrees shown bottom-left (development helper)
+- 30-second auto-game-over with `'survived'` result (placeholder)
+
+---
+
+## CSS & HTML Notes
+
+### style.css
+- Global reset: margin/padding/box-sizing on all elements
+- `html, body`: 100% size, black background, flexbox centering, `overflow: hidden`, zoom disabled
+- Canvas: `image-rendering: pixelated` (sharp scaling), `cursor: crosshair`
+- **Portrait orientation overlay**: `@media screen and (orientation: portrait)` shows "↻ Please rotate your device to landscape" — the game requires landscape
+
+### index.html Meta Tags (iOS critical)
+- `viewport`: `user-scalable=no` — prevents pinch-zoom breaking input
+- `apple-mobile-web-app-capable`: enables full-screen when added to iOS home screen
+- `apple-mobile-web-app-status-bar-style: black-translucent` — immersive status bar
+- `format-detection: telephone=no` — prevents phone-number link detection
+
+---
+
 ## Git Workflow
 
 - **Default branch**: `master`
 - **Feature branches**: `claude/<task-slug>`
-- **Active branch**: `claude/claude-md-mm2qx7mdoo3e0x5h-R0AK2`
+- **Active branch**: `claude/claude-md-mm2urte7aivbwqco-WxGdl`
 - Never push to `master` without explicit permission
 - Commit messages: imperative, one logical change per commit
 - Push with: `git push -u origin <branch-name>`
@@ -159,6 +252,7 @@ gameData = {
 - `const` by default; `let` when reassignment is needed; never `var`
 - Private/internal members prefixed with `_` (e.g. `this._stack`)
 - Comments explain *why*, not *what* — the code should be readable on its own
+- Section separators: `// ================================================================`
 
 ### Adding a New State
 1. Create `js/states/YourState.js`
@@ -189,11 +283,11 @@ No `npm install`, no compilation step needed.
 
 ## Logical Next Steps
 
-These are the recommended steps to turn this foundation into a playable game, in order:
+These are the recommended next steps to turn this foundation into a playable game, in priority order:
 
-1. **Scrolling ground background** — create a parallax ground layer that scrolls left in PilotGameState to give the feeling of forward flight
-2. **Bullets / projectiles** — add a `Bullet` entity; fire from the plane on right-stick input; fire from the gun in GunnerMode on FIRE tap
-3. **Ground enemies** — add `AntiAirGun`, `MissileLauncher`, and `EnemyBase` entities with their own HealthSystem and attack logic
+1. ~~**Scrolling ground background**~~ ✅ — Implemented in `PilotGameState._buildGroundFeatures()` and `_groundOffset` scroll loop
+2. **Bullets / projectiles** — add a `Bullet` entity; fire from the plane on right-stick tap; fire from the gun in GunnerMode on FIRE tap
+3. **Ground enemies** — add `AntiAirGun`, `MissileLauncher`, and `EnemyBase` entities with their own HealthSystem and attack logic; make them scroll with the ground
 4. **Collision detection** — simple AABB (rectangle) overlap checks between bullets and entities
 5. **Enemy planes (Gunner Mode)** — add planes that fly across the sky in GunnerGameState
 6. **Win/lose conditions** — replace the 30-second placeholder timer with real mission goals
@@ -207,10 +301,13 @@ These are the recommended steps to turn this foundation into a playable game, in
 
 - **No build step** — edit files, refresh browser, that's it
 - **No external libraries** — keep it dependency-free unless there's a compelling reason
-- **`_drawButton` is a global helper** defined in `MainMenuState.js` — all state files can call it
+- **`_drawButton` is a global helper** defined at the bottom of `MainMenuState.js` — all state files can call it since it loads first among the states
 - **Script load order matters** — `index.html` loads files in dependency order; add new scripts in the right place
 - **gameData is the inter-state bus** — store anything that needs to survive a state transition there
 - **All coordinates are in game space (960×540)** — never use `window.innerWidth/Height` in game logic
 - **`input.clearTaps()` must be called at the end of every `update()`** — failing to do so causes taps to persist across frames
+- **`ctx.save()` / `ctx.restore()` around every transform** — prevents cascading matrix bugs
+- **Death callbacks use `setTimeout(800ms)`** — brief delay before transitioning to GameOverState; `_gameOverPending` flag prevents duplicate triggers
+- **`window.game`** is exposed in `main.js` for browser console debugging: `game.stateManager`, `game.input`, `game.gameLoop`, `game.gameData`
 - Avoid adding unrequested scaffolding, dependencies, or "improvements" beyond the task at hand
 - Update this `CLAUDE.md` whenever the folder structure, conventions, or systems change significantly
