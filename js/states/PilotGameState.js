@@ -6,12 +6,18 @@
    Left stick = movement. Right stick = weapon aim direction.
    HUD shows health bar, mode label, and elapsed time.
 
-   BACKGROUND SYSTEM (added this session):
-     The sky is a static gradient drawn once each frame.
+   BACKGROUND SYSTEM:
+     The sky is drawn as flat horizontal colour bands (no gradients).
      The ground is a single tiled layer that scrolls right-to-left,
      giving the feeling of flying forward over enemy territory.
      Scroll speed is derived from the plane's Speed stat so faster
      planes feel faster. See _drawSky() and _drawGround() below.
+
+   VISUAL STYLE (see Visual Style Guide in CLAUDE.md):
+     - ctx.imageSmoothingEnabled = false set at the top of render()
+     - Sky: four flat colour bands, no createLinearGradient
+     - Ground base: three flat colour bands, no createLinearGradient
+     - Ground features: fillRect only — no ellipse() or arc()
 
    WHAT TO BUILD NEXT:
      - Parallax mid-ground and far-hill layers for depth
@@ -152,6 +158,7 @@ class PilotGameState {
   // ==========================================================
 
   render(ctx) {
+    ctx.imageSmoothingEnabled = false; // pixel-art style — no interpolation (Visual Style Guide rule 2)
     const W = ctx.canvas.width;
     const H = ctx.canvas.height;
 
@@ -192,37 +199,37 @@ class PilotGameState {
   // BACKGROUND: SKY (static)
   // ==========================================================
 
-  // The sky is a fixed gradient — it never scrolls.
-  // Deep navy at the top fades to hazy steel-blue at the horizon.
-  // A thin warm glow near the horizon suggests fires burning below.
+  // The sky is a fixed set of flat colour bands — it never scrolls.
+  // Hard-edged horizontal strips step from deep navy at the top down to
+  // a hazy blue near the horizon.  No gradients (Visual Style Guide rule 1).
   _drawSky(ctx, W, H) {
-    const horizonY = H * 0.72;
+    const horizonY = Math.floor(H * 0.72);
 
-    // Main sky gradient
-    const sky = ctx.createLinearGradient(0, 0, 0, horizonY);
-    sky.addColorStop(0.00, '#07101f'); // Deep navy at zenith
-    sky.addColorStop(0.65, '#122848'); // Dark steel blue mid-sky
-    sky.addColorStop(1.00, '#2a4060'); // Hazy blue at horizon
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, horizonY);
+    // Flat banded sky — four distinct colour strips
+    ctx.fillStyle = '#07101f';                                               // Deep navy (zenith)
+    ctx.fillRect(0, 0, W, Math.floor(horizonY * 0.35));
 
-    // Warm amber haze just above the horizon — distant fires in enemy territory
-    const haze = ctx.createLinearGradient(0, horizonY - 38, 0, horizonY);
-    haze.addColorStop(0, 'rgba(150, 70, 15, 0)');
-    haze.addColorStop(1, 'rgba(150, 70, 15, 0.22)');
-    ctx.fillStyle = haze;
-    ctx.fillRect(0, horizonY - 38, W, 38);
+    ctx.fillStyle = '#0d1e38';                                               // Dark blue (upper-mid)
+    ctx.fillRect(0, Math.floor(horizonY * 0.35), W, Math.floor(horizonY * 0.25));
 
-    // Static stars near the top of the sky
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.fillStyle = '#122848';                                               // Steel blue (lower-mid)
+    ctx.fillRect(0, Math.floor(horizonY * 0.60), W, Math.floor(horizonY * 0.25));
+
+    ctx.fillStyle = '#1e3a52';                                               // Hazy blue (near horizon)
+    ctx.fillRect(0, Math.floor(horizonY * 0.85), W, horizonY - Math.floor(horizonY * 0.85));
+
+    // Warm amber strip at the horizon — distant fires, flat solid colour
+    ctx.fillStyle = '#3a2010';
+    ctx.fillRect(0, horizonY - 8, W, 8);
+
+    // Stars as 2×2 pixel squares — no arc(), no anti-aliasing (Visual Style Guide rule 4)
+    ctx.fillStyle = '#c8d8e8';
     [
-      [45, 12, 1.1], [150, 28, 0.9], [270, 10, 1.2], [400, 22, 0.8],
-      [520, 8,  1.0], [640, 32, 0.9], [760, 18, 1.1], [880, 9,  0.8],
-      [100, 52, 0.7], [340, 44, 1.0], [590, 48, 0.8], [820, 38, 0.9],
-    ].forEach(([sx, sy, r]) => {
-      ctx.beginPath();
-      ctx.arc(sx, sy, r, 0, Math.PI * 2);
-      ctx.fill();
+      [44, 12], [148, 28], [268, 10], [400, 22],
+      [520, 8 ], [640, 32], [760, 18], [880, 8 ],
+      [100, 52], [340, 44], [590, 48], [820, 38],
+    ].forEach(([sx, sy]) => {
+      ctx.fillRect(sx, sy, 2, 2);
     });
   }
 
@@ -246,21 +253,19 @@ class PilotGameState {
     const horizonY = H * 0.72;
     const groundH  = H - horizonY;
 
-    // Solid base fill — arid, dusty earth
-    const base = ctx.createLinearGradient(0, horizonY, 0, H);
-    base.addColorStop(0.00, '#4a3820'); // Sandy tan near horizon
-    base.addColorStop(0.35, '#3c2e16'); // Darker mid-ground
-    base.addColorStop(1.00, '#2a2010'); // Dark base at screen bottom
-    ctx.fillStyle = base;
-    ctx.fillRect(0, horizonY, W, groundH);
+    // Flat banded ground — three colour strips, no gradients (Visual Style Guide rule 1)
+    ctx.fillStyle = '#4a3820';                                               // Sandy tan (near horizon)
+    ctx.fillRect(0, Math.floor(horizonY),                              W, Math.floor(groundH * 0.30));
 
-    // Horizon edge — crisp line separating sky from ground
-    ctx.strokeStyle = '#5e4a28';
-    ctx.lineWidth   = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(0, horizonY);
-    ctx.lineTo(W, horizonY);
-    ctx.stroke();
+    ctx.fillStyle = '#3c2e16';                                               // Mid earth
+    ctx.fillRect(0, Math.floor(horizonY + groundH * 0.30),             W, Math.floor(groundH * 0.40));
+
+    ctx.fillStyle = '#2a2010';                                               // Dark base (screen bottom)
+    ctx.fillRect(0, Math.floor(horizonY + groundH * 0.70),             W, Math.ceil(groundH  * 0.30));
+
+    // Horizon edge — 2px fillRect, not strokeRect, to avoid sub-pixel bleed
+    ctx.fillStyle = '#5e4a28';
+    ctx.fillRect(0, Math.floor(horizonY), W, 2);
 
     // Draw scrolling detail tiles
     const shift = this._groundOffset % this._TILE_W;
@@ -341,7 +346,7 @@ function _buildGroundFeatures() {
   });
 
   // ---- Bomb craters ----
-  // Dark elliptical pits with a sandy ejecta ring around them.
+  // Dark rectangular pits with a sandy ejecta ring — pixel-art style, no ellipses.
   [
     [75,  0.28, 14], [195, 0.65, 17], [330, 0.38, 11],
     [460, 0.72, 19], [560, 0.22, 13], [680, 0.58, 15],
@@ -350,22 +355,23 @@ function _buildGroundFeatures() {
     features.push({
       x: fx, y: fy, r,
       draw(ctx, px, py, f) {
-        // Sandy blast ring (disturbed earth kicked outward by the explosion)
-        ctx.fillStyle = 'rgba(100, 78, 38, 0.60)';
-        ctx.beginPath();
-        ctx.ellipse(px, py, f.r * 1.75, f.r * 0.88, 0, 0, Math.PI * 2);
-        ctx.fill();
-        // Dark crater pit
-        ctx.fillStyle = 'rgba(16, 10, 4, 0.90)';
-        ctx.beginPath();
-        ctx.ellipse(px, py, f.r, f.r * 0.50, 0, 0, Math.PI * 2);
-        ctx.fill();
+        // Sandy blast ring — flat rectangle (Visual Style Guide rule 4)
+        const rw = Math.floor(f.r * 3.5);
+        const rh = Math.floor(f.r * 0.88);
+        ctx.fillStyle = '#644e26';
+        ctx.fillRect(Math.floor(px - rw / 2), Math.floor(py - rh / 2), rw, rh);
+        // Dark crater pit — smaller inner rectangle
+        const pw = Math.floor(f.r * 2);
+        const ph = Math.max(4, Math.floor(f.r * 0.5));
+        ctx.fillStyle = '#100a04';
+        ctx.fillRect(Math.floor(px - pw / 2), Math.floor(py - ph / 2), pw, ph);
       },
     });
   });
 
   // ---- Scorched / burned patches ----
-  // Dark irregular ellipses — napalm strikes, oil fires, vehicle burn-outs.
+  // Dark solid rectangles — napalm strikes, oil fires, vehicle burn-outs.
+  // Pixel-art style: flat rectangles, no ellipses (Visual Style Guide rule 4).
   [
     [145, 0.44, 54, 24], [310, 0.78, 62, 28], [500, 0.30, 46, 20],
     [720, 0.62, 52, 24], [870, 0.48, 40, 18],
@@ -373,26 +379,23 @@ function _buildGroundFeatures() {
     features.push({
       x: fx, y: fy, w, h,
       draw(ctx, px, py, f) {
-        ctx.fillStyle = 'rgba(14, 9, 3, 0.75)';
-        ctx.beginPath();
-        ctx.ellipse(px, py, f.w / 2, f.h / 2, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillStyle = '#0e0903';
+        ctx.fillRect(Math.floor(px - f.w / 2), Math.floor(py - f.h / 2), f.w, f.h);
       },
     });
   });
 
   // ---- Sandy lighter patches ----
-  // Lighter tan ellipses to break up the uniform ground colour and add texture.
+  // Flat tan rectangles to break up the uniform ground colour.
+  // Pixel-art style: solid fillRect, no ellipses (Visual Style Guide rule 4).
   [
     [220, 0.55, 52, 22], [490, 0.20, 44, 18], [740, 0.80, 58, 26],
   ].forEach(([fx, fy, w, h]) => {
     features.push({
       x: fx, y: fy, w, h,
       draw(ctx, px, py, f) {
-        ctx.fillStyle = 'rgba(105, 84, 44, 0.48)';
-        ctx.beginPath();
-        ctx.ellipse(px, py, f.w / 2, f.h / 2, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillStyle = '#695830';
+        ctx.fillRect(Math.floor(px - f.w / 2), Math.floor(py - f.h / 2), f.w, f.h);
       },
     });
   });
