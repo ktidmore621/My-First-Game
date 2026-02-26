@@ -75,6 +75,7 @@ class GameOverState {
   // ==========================================================
 
   render(ctx) {
+    ctx.imageSmoothingEnabled = false; // pixel-art style — no interpolation (Visual Style Guide rule 2)
     const W = ctx.canvas.width;
     const H = ctx.canvas.height;
 

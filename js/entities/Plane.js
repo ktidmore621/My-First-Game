@@ -84,6 +84,7 @@ class Plane {
   // ==========================================================
 
   render(ctx) {
+    ctx.imageSmoothingEnabled = false; // pixel-art style — no interpolation (Visual Style Guide rule 2)
     // --- Plane body (rotated triangle) ---
     ctx.save();
     ctx.translate(this.x, this.y);
@@ -99,11 +100,14 @@ class Plane {
     ctx.closePath();
     ctx.fill();
 
-    // Cockpit highlight
+    // Cockpit highlight — pixel-art fillRect, no ellipse() (Visual Style Guide rule 4)
     ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-    ctx.beginPath();
-    ctx.ellipse(this.width * 0.1, 0, this.width * 0.12, this.height * 0.2, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.fillRect(
+      Math.round(this.width * 0.1 - this.width * 0.12),
+      -Math.round(this.height * 0.2),
+      Math.round(this.width * 0.24),
+      Math.round(this.height * 0.4)
+    );
 
     ctx.restore();
 

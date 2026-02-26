@@ -149,7 +149,7 @@ Both `onDamage` and `onDeath` return `this` for chaining. Multiple callbacks can
 ```javascript
 const p = new Plane({ id, name, speed, durability, weaponSize, maneuverability, x, y, color });
 p.health       // HealthSystem instance
-p.render(ctx)  // triangle placeholder + health bar (uses ctx.ellipse for cockpit — Style Guide violation)
+p.render(ctx)  // triangle placeholder + health bar; cockpit highlight is a pixel-art fillRect
 p.reset(x, y)  // restore health, reset velocity + position
 p.isAlive()    // convenience wrapper for p.health.isAlive()
 ```
@@ -234,7 +234,7 @@ Ground features built by `_buildGroundFeatures()` — all positioned in 0–960 
 - "← Back" button (top-left) returns to MainMenuState
 - Aim angle readout in degrees shown bottom-left (development helper)
 - 30-second auto-game-over with `'survived'` result (placeholder); score = `elapsed * 8`
-- Note: `GunnerGameState.render()` does **not** set `ctx.imageSmoothingEnabled = false`
+- Sky uses four flat `fillRect` bands matching the palette (rules 1 & 3); turret dome is a `fillRect` rectangle (rule 4)
 
 ---
 
@@ -332,12 +332,7 @@ These are the recommended next steps to turn this foundation into a playable gam
 - **`input.clearTaps()` must be called at the end of every `update()`** — failing to do so causes taps to persist across frames
 - **`ctx.save()` / `ctx.restore()` around every transform** — prevents cascading matrix bugs
 - **Death callbacks use `setTimeout(800ms)`** — brief delay before transitioning to GameOverState; `_gameOverPending` flag prevents duplicate triggers
-- **`ctx.imageSmoothingEnabled = false` is currently only set in `PilotGameState.render()`** — it is missing from `GunnerGameState`, `MainMenuState`, `PlaneSelectState`, `GameOverState`, and `Plane.render()`. Any new `render()` method must set it at the very top.
-- **Multiple states still violate the Visual Style Guide** — any new `render()` code must not repeat these patterns; fix them when refactoring those files:
-  - `GunnerGameState.render()` — sky uses `createLinearGradient`; turret body uses `ctx.arc()` (rules 1 & 4)
-  - `MainMenuState.render()` — sky uses `createLinearGradient`; stars use `ctx.arc()` (rules 1 & 4)
-  - `PlaneSelectState._drawCard()` — cockpit glint uses `ctx.ellipse()` (rule 4)
-  - `Plane.render()` — cockpit highlight uses `ctx.ellipse()` (rule 4)
+- **`ctx.imageSmoothingEnabled = false`** must be the first line of every `render()` method — now set in all render methods: `PilotGameState`, `GunnerGameState`, `MainMenuState`, `PlaneSelectState`, `GameOverState`, and `Plane.render()`. Any new `render()` method must continue this pattern.
 - **`window.game`** is exposed in `main.js` for browser console debugging: `game.stateManager`, `game.input`, `game.gameLoop`, `game.gameData`
 - Avoid adding unrequested scaffolding, dependencies, or "improvements" beyond the task at hand
 - Update this `CLAUDE.md` whenever the folder structure, conventions, or systems change significantly

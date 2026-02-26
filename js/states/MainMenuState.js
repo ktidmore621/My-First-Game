@@ -59,37 +59,36 @@ class MainMenuState {
   // ==========================================================
 
   render(ctx) {
+    ctx.imageSmoothingEnabled = false; // pixel-art style — no interpolation (Visual Style Guide rule 2)
     const W = ctx.canvas.width;
     const H = ctx.canvas.height;
 
-    // --- Background: sky gradient + ground strip ---
-    const sky = ctx.createLinearGradient(0, 0, 0, H * 0.72);
-    sky.addColorStop(0, '#07101f');
-    sky.addColorStop(1, '#103a6a');
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, H);
-
-    // Distant horizon glow
-    const glow = ctx.createLinearGradient(0, H * 0.55, 0, H * 0.72);
-    glow.addColorStop(0, 'rgba(255, 160, 60, 0)');
-    glow.addColorStop(1, 'rgba(255, 120, 30, 0.25)');
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, H * 0.55, W, H * 0.17);
+    // --- Background: sky flat bands + ground strip (Visual Style Guide rule 1) ---
+    const horizonY = Math.floor(H * 0.72);
+    ctx.fillStyle = '#07101f';                                               // Deep navy (zenith)
+    ctx.fillRect(0, 0, W, Math.floor(horizonY * 0.35));
+    ctx.fillStyle = '#0d1e38';                                               // Dark blue (upper-mid)
+    ctx.fillRect(0, Math.floor(horizonY * 0.35), W, Math.floor(horizonY * 0.25));
+    ctx.fillStyle = '#122848';                                               // Steel blue (lower-mid)
+    ctx.fillRect(0, Math.floor(horizonY * 0.60), W, Math.floor(horizonY * 0.25));
+    ctx.fillStyle = '#1e3a52';                                               // Hazy blue (near horizon)
+    ctx.fillRect(0, Math.floor(horizonY * 0.85), W, horizonY - Math.floor(horizonY * 0.85));
+    // Warm amber strip at the horizon — flat solid colour, no gradient
+    ctx.fillStyle = '#3a2010';
+    ctx.fillRect(0, horizonY - 8, W, 8);
 
     // Ground
     ctx.fillStyle = '#1e3310';
     ctx.fillRect(0, H * 0.72, W, H * 0.28);
 
-    // Stars (simple dots)
+    // Stars — 2×2 pixel squares, no arc() (Visual Style Guide rule 4)
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
     const stars = [
       [80,40],[200,20],[350,55],[500,15],[650,40],[780,25],
       [900,50],[130,80],[420,30],[710,70],[860,35],[50,100],
     ];
     stars.forEach(([sx, sy]) => {
-      ctx.beginPath();
-      ctx.arc(sx, sy, 1.2, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillRect(sx - 1, sy - 1, 2, 2);
     });
 
     // --- Title ---

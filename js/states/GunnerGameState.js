@@ -113,15 +113,23 @@ class GunnerGameState {
   // ==========================================================
 
   render(ctx) {
+    ctx.imageSmoothingEnabled = false; // pixel-art style — no interpolation (Visual Style Guide rule 2)
     const W = ctx.canvas.width;
     const H = ctx.canvas.height;
 
-    // --- Sky ---
-    const sky = ctx.createLinearGradient(0, 0, 0, H * 0.72);
-    sky.addColorStop(0, '#07101f');
-    sky.addColorStop(1, '#1a3a6a');
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, H * 0.72);
+    // --- Sky: flat colour bands, no gradients (Visual Style Guide rule 1) ---
+    const horizonY = Math.floor(H * 0.72);
+    ctx.fillStyle = '#07101f';                                               // Deep navy (zenith)
+    ctx.fillRect(0, 0, W, Math.floor(horizonY * 0.35));
+    ctx.fillStyle = '#0d1e38';                                               // Dark blue (upper-mid)
+    ctx.fillRect(0, Math.floor(horizonY * 0.35), W, Math.floor(horizonY * 0.25));
+    ctx.fillStyle = '#122848';                                               // Steel blue (lower-mid)
+    ctx.fillRect(0, Math.floor(horizonY * 0.60), W, Math.floor(horizonY * 0.25));
+    ctx.fillStyle = '#1e3a52';                                               // Hazy blue (near horizon)
+    ctx.fillRect(0, Math.floor(horizonY * 0.85), W, horizonY - Math.floor(horizonY * 0.85));
+    // Warm amber strip at the horizon — distant fires, flat solid colour
+    ctx.fillStyle = '#3a2010';
+    ctx.fillRect(0, horizonY - 8, W, 8);
 
     // --- Ground ---
     ctx.fillStyle = '#1e3310';
@@ -208,16 +216,12 @@ class GunnerGameState {
     ctx.lineWidth   = 1;
     ctx.strokeRect(gx - 45, gy - 10, 90, 20);
 
-    // Turret body
+    // Turret body — pixel-art dome: flat rectangle, no arc() (Visual Style Guide rule 4)
     ctx.fillStyle = '#546e7a';
-    ctx.beginPath();
-    ctx.arc(gx, gy - 12, 22, Math.PI, 0); // Top half circle
-    ctx.fill();
+    ctx.fillRect(gx - 22, gy - 34, 44, 22);
     ctx.strokeStyle = '#37474f';
     ctx.lineWidth   = 1.5;
-    ctx.beginPath();
-    ctx.arc(gx, gy - 12, 22, Math.PI, 0);
-    ctx.stroke();
+    ctx.strokeRect(gx - 22, gy - 34, 44, 22);
 
     // Rotating barrel
     ctx.save();
