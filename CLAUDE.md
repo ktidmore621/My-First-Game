@@ -70,6 +70,22 @@ All game logic uses a **fixed 960 × 540 (16:9) canvas**. The canvas is then sca
 
 ---
 
+## Visual Style Guide
+
+The game targets a **pixel-art aesthetic** — hard edges, flat colours, and a limited earthy palette. All new rendering code must follow these rules:
+
+1. **Hard pixel edges everywhere** — no anti-aliasing, no smooth gradients on solid objects. Use flat `fillRect` colour bands instead of `createLinearGradient` for backgrounds.
+2. **`ctx.imageSmoothingEnabled = false`** must be set at the start of every `render()` call (and anywhere else the canvas context is referenced for drawing).
+3. **Limited, intentional colour palette**:
+   - *Ground*: earthy muted tones — `#2a2010`, `#3c2e16`, `#4a3820`, `#5e4a28`
+   - *Sky*: deep blues and purples — `#07101f`, `#0d1e38`, `#122848`, `#1e3a52`
+   - *Warm accents*: amber/orange for horizon glow and fires — `#3a2010`, `#96461e`
+   - *UI / explosions*: warm highlights — reds, oranges, whites
+4. **Pixel-grid shapes only** — favour `fillRect` and clear outlines over `arc`, `ellipse`, and curves. Sprites and ground features should feel drawn on a grid, with flat shading and no soft edges.
+5. **16×16 and 32×32 unit tile grid** — the game's pixel grid is based on these tile sizes. All future entities (enemies, bullets, pickups) must be designed to snap to this scale. The 960×540 canvas fits exactly 60×33.75 sixteen-pixel tiles.
+
+---
+
 ## State Machine Flow
 
 ```
