@@ -110,6 +110,7 @@ class PlaneSelectState {
   // ==========================================================
 
   render(ctx) {
+    ctx.imageSmoothingEnabled = false; // pixel-art style — no interpolation (Visual Style Guide rule 2)
     const W = ctx.canvas.width;
     const H = ctx.canvas.height;
 
@@ -190,11 +191,9 @@ class PlaneSelectState {
     ctx.lineTo(-28, 18);
     ctx.closePath();
     ctx.fill();
-    // Cockpit glint
+    // Cockpit glint — pixel-art fillRect, no ellipse() (Visual Style Guide rule 4)
     ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.beginPath();
-    ctx.ellipse(10, 0, 11, 6, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.fillRect(-1, -3, 22, 6);
     ctx.restore();
 
     // Stat bars
