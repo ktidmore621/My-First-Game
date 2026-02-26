@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+
+  <!--
+    This tag tells the browser (and iOS Safari) to:
+    - Match the screen width exactly (don't zoom out to show a full desktop page)
+    - Start at 1x zoom
+    - Disable pinch-to-zoom (we handle all input ourselves)
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+
+  <!-- Makes the game run as a true full-screen app when added to the iOS home screen -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-fullscreen" />
+
+  <!-- Prevents iOS from turning numbers into phone-call links -->
+  <meta name="format-detection" content="telephone=no" />
+
+  <title>My First Game</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!--
+    THE CANVAS — this is the entire game screen.
+    Think of it like a digital whiteboard. JavaScript draws everything here
+    60 times per second to create the illusion of movement and animation.
+
+    Its actual pixel size is set by JavaScript in main.js.
+    CSS in style.css handles centering and scaling it to fit any screen.
+  -->
+  <canvas id="gameCanvas"></canvas>
+
+  <!--
+    ============================================================
+    SCRIPT LOADING ORDER
+    ============================================================
+    JavaScript files must be loaded in the right order because
+    some files depend on code defined in earlier files.
+
+    Think of it like assembly instructions:
+      1. Foundation pieces first (no dependencies)
+      2. Systems that use those pieces
+      3. Game screens that use those systems
+      4. The "start" command last (main.js)
+    ============================================================
+  -->
+
+  <!-- STEP 1: Foundation — standalone building blocks -->
+  <script src="js/entities/HealthSystem.js"></script>
+  <script src="js/engine/StateManager.js"></script>
+
+  <!-- STEP 2: Systems that build on the foundation -->
+  <script src="js/engine/GameLoop.js"></script>
+  <script src="js/input/InputHandler.js"></script>
+  <script src="js/entities/Plane.js"></script>
+
+  <!-- STEP 3: Game screens (states) -->
+  <script src="js/states/MainMenuState.js"></script>
+  <script src="js/states/PlaneSelectState.js"></script>
+  <script src="js/states/PilotGameState.js"></script>
+  <script src="js/states/GunnerGameState.js"></script>
+  <script src="js/states/GameOverState.js"></script>
+
+  <!-- STEP 4: Entry point — ties everything together and starts the game -->
+  <script src="js/main.js"></script>
+
+</body>
+</html>
