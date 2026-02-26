@@ -3,25 +3,22 @@
    ============================================================
    The main gameplay screen for PILOT MODE.
 
-   The player flies their chosen plane over enemy territory.
    Left stick = movement. Right stick = weapon aim direction.
    HUD shows health bar, mode label, and elapsed time.
 
-   CURRENT STATE (foundation):
-     - Smooth plane movement with momentum
-     - Screen-boundary clamping (can't fly off-screen)
-     - Aim angle updated from right stick
-     - Dashed aim indicator line from nose of plane
-     - Placeholder buttons for Weapon Select and Evade
-     - Auto-transitions to GameOverState after 30 seconds
-       (remove this when enemy logic is implemented)
+   BACKGROUND SYSTEM (added this session):
+     The sky is a static gradient drawn once each frame.
+     The ground is a single tiled layer that scrolls right-to-left,
+     giving the feeling of flying forward over enemy territory.
+     Scroll speed is derived from the plane's Speed stat so faster
+     planes feel faster. See _drawSky() and _drawGround() below.
 
-   WHAT TO BUILD NEXT HERE:
-     - Scrolling ground background
-     - Enemy objects (anti-aircraft guns, missile launchers, bases)
-     - Bullet/projectile firing from the plane
+   WHAT TO BUILD NEXT:
+     - Parallax mid-ground and far-hill layers for depth
+     - Enemy objects with world-space positions that scroll with the ground
+     - Bullet/projectile firing
      - Collision detection
-     - Mission completion condition (destroy all targets / reach destination)
+     - Mission completion condition
    ============================================================ */
 
 class PilotGameState {
@@ -38,80 +35,90 @@ class PilotGameState {
       x: 100, y: 270,
     });
 
-    // Aim angle in radians — updated by right stick, used by weapons
-    // 0 = pointing right, π/2 = pointing down, etc.
+    // Aim angle in radians (0 = pointing right)
     this._aimAngle = 0;
 
-    this._elapsedTime      = 0;
-    this._gameOverPending  = false;
+    this._elapsedTime     = 0;
+    this._gameOverPending = false;
 
-    // Game canvas dimensions (must match GAME_WIDTH / GAME_HEIGHT in main.js)
     this._W = 960;
     this._H = 540;
 
-    // Register death callback — when the plane's health hits zero, end the game
+    // ---- Ground scrolling setup ----
+    // The tile width matches the canvas width so exactly one tile fills the screen.
+    // We always draw two tiles side-by-side and shift them left each frame,
+    // creating seamless looping. See _drawGround() for details.
+    this._TILE_W = 960;
+
+    // Accumulated scroll distance in pixels (grows without bound; we use % when drawing)
+    this._groundOffset = 0;
+
+    // Scroll speed in pixels/second, driven by the plane's Speed stat:
+    //   speed =   0  →  55 px/s  (slowest, barely creeping)
+    //   speed =  50  → 138 px/s  (moderate)
+    //   speed = 100  → 220 px/s  (feels fast)
+    this._scrollSpeed = 55 + (this._player.speed / 100) * 165;
+
+    // Pre-build the ground detail array once so we don't allocate each frame
+    this._groundFeatures = _buildGroundFeatures();
+
+    // Register death callback
     this._player.health.onDeath(() => {
       if (!this._gameOverPending) {
-        this._gameOverPending   = true;
-        this._gameData.score    = Math.floor(this._elapsedTime * 10);
-        this._gameData.result   = 'defeated';
+        this._gameOverPending = true;
+        this._gameData.score  = Math.floor(this._elapsedTime * 10);
+        this._gameData.result = 'defeated';
         setTimeout(() => {
           this._sm.change(new GameOverState(this._sm, this._input, this._gameData));
-        }, 800); // Brief delay so player sees the moment of destruction
+        }, 800);
       }
     });
   }
 
   enter() {
-    console.log('[State] Pilot Mode — flying:', this._player.name);
+    console.log('[State] Pilot Mode — plane:', this._player.name,
+      '| ground scroll:', Math.round(this._scrollSpeed), 'px/s');
   }
 
   exit() {}
 
   // ==========================================================
-  // UPDATE — game logic runs here every frame
+  // UPDATE
   // ==========================================================
 
   update(dt) {
     this._elapsedTime += dt;
 
-    // --- Movement ---
-    // Convert the left stick's -1→+1 values into actual pixels-per-second speed.
-    // The plane's speed stat (0–100) scales the maximum movement speed.
-    // Maneuverability (0–100) controls how responsive the stick feels.
-    const maxSpeed   = (this._player.speed           / 100) * 220; // px/sec at full stick
-    const turnRate   = (this._player.maneuverability / 100) * 10 + 4; // acceleration factor
+    // Advance the ground scroll by this frame's time slice.
+    // Not calling this line is how a pause screen would freeze the background.
+    this._groundOffset += this._scrollSpeed * dt;
+
+    // --- Player movement ---
+    const maxSpeed = (this._player.speed           / 100) * 220;
+    const turnRate = (this._player.maneuverability  / 100) * 10 + 4;
 
     if (this._input.leftStick.active) {
-      // Accelerate toward the stick direction
       this._player.velocityX += (this._input.leftStick.x * maxSpeed - this._player.velocityX) * turnRate * dt;
       this._player.velocityY += (this._input.leftStick.y * maxSpeed - this._player.velocityY) * turnRate * dt;
 
-      // Update facing angle to match movement direction (only if moving meaningfully)
-      const speed = Math.hypot(this._player.velocityX, this._player.velocityY);
-      if (speed > 15) {
+      const spd = Math.hypot(this._player.velocityX, this._player.velocityY);
+      if (spd > 15) {
         this._player.angle = Math.atan2(this._player.velocityY, this._player.velocityX);
       }
     } else {
-      // No input: gradually decelerate (drag)
       this._player.velocityX *= 0.88;
       this._player.velocityY *= 0.88;
     }
 
-    // Apply velocity to position
     this._player.x += this._player.velocityX * dt;
     this._player.y += this._player.velocityY * dt;
 
-    // Clamp to screen bounds (half-width/height margin so plane doesn't clip edges)
     const hw = this._player.width  / 2;
     const hh = this._player.height / 2;
-    this._player.x = Math.max(hw,          Math.min(this._W - hw, this._player.x));
-    this._player.y = Math.max(hh + 30,     Math.min(this._H - hh - 30, this._player.y));
-    // (+30 vertical margin keeps plane away from HUD at top and control buttons at bottom)
+    this._player.x = Math.max(hw,      Math.min(this._W - hw,      this._player.x));
+    this._player.y = Math.max(hh + 30, Math.min(this._H - hh - 30, this._player.y));
 
     // --- Aim ---
-    // The right stick sets the aim angle for the weapon.
-    // Any direction with meaningful input (>10% deflection) updates the aim.
     if (this._input.rightStick.active) {
       const rx = this._input.rightStick.x;
       const ry = this._input.rightStick.y;
@@ -120,25 +127,20 @@ class PilotGameState {
       }
     }
 
-    // --- Placeholder: Weapon Select button tap ---
-    // Region: bottom-right area. Replace with actual weapon cycling logic.
+    // --- Button placeholders ---
     if (this._input.wasTappedInRegion(820, 460, 130, 58)) {
       console.log('[Input] Weapon Select tapped — implement weapon cycling here');
     }
-
-    // --- Placeholder: Defensive Maneuver button tap ---
-    // Region: to the left of Weapon Select. Replace with actual evasion logic.
     if (this._input.wasTappedInRegion(680, 460, 130, 58)) {
       console.log('[Input] Evade tapped — implement defensive maneuver here');
     }
 
-    // --- Placeholder: Auto game-over after 30 seconds ---
-    // This exists only so you can see the full state flow while testing.
-    // REMOVE THIS when actual win/lose conditions are implemented.
+    // --- Placeholder: auto game-over at 30 s ---
+    // Remove when real win/lose conditions are in place.
     if (this._elapsedTime > 30 && !this._gameOverPending) {
       this._gameOverPending = true;
       this._gameData.score  = Math.floor(this._elapsedTime * 10);
-      this._gameData.result = 'survived'; // Temporary placeholder result
+      this._gameData.result = 'survived';
       this._sm.change(new GameOverState(this._sm, this._input, this._gameData));
     }
 
@@ -146,40 +148,23 @@ class PilotGameState {
   }
 
   // ==========================================================
-  // RENDER — draw the scene
+  // RENDER
   // ==========================================================
 
   render(ctx) {
     const W = ctx.canvas.width;
     const H = ctx.canvas.height;
 
-    // --- Sky ---
-    const sky = ctx.createLinearGradient(0, 0, 0, H * 0.75);
-    sky.addColorStop(0, '#07101f');
-    sky.addColorStop(1, '#1a4a8c');
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, H);
+    // Draw back-to-front so later layers paint over earlier ones
+    this._drawSky(ctx, W, H);
+    this._drawGround(ctx, W, H);
 
-    // --- Ground ---
-    ctx.fillStyle = '#1e3310';
-    ctx.fillRect(0, H * 0.75, W, H * 0.25);
+    // Placeholder enemy markers (static screen-space for now; will scroll with ground later)
+    _drawPlaceholderEnemy(ctx, 400, H * 0.72 - 18, '▲ AA Gun');
+    _drawPlaceholderEnemy(ctx, 620, H * 0.72 - 18, '▲ Missile');
+    _drawPlaceholderEnemy(ctx, 820, H * 0.72 - 22, '▲ Base');
 
-    // Horizon line
-    ctx.strokeStyle = '#2e4a1e';
-    ctx.lineWidth   = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(0, H * 0.75);
-    ctx.lineTo(W, H * 0.75);
-    ctx.stroke();
-
-    // --- Placeholder: ground threat indicators ---
-    // These rectangles show WHERE enemy objects will eventually be placed.
-    _drawPlaceholderEnemy(ctx, 400, H * 0.75 - 18, '▲ AA Gun');
-    _drawPlaceholderEnemy(ctx, 620, H * 0.75 - 18, '▲ Missile');
-    _drawPlaceholderEnemy(ctx, 820, H * 0.75 - 22, '▲ Base');
-
-    // --- Aim indicator line ---
-    // A dashed line from the plane nose showing current weapon aim direction.
+    // Aim indicator line from the plane nose
     if (this._input.rightStick.active) {
       ctx.save();
       ctx.translate(this._player.x, this._player.y);
@@ -195,37 +180,125 @@ class PilotGameState {
       ctx.restore();
     }
 
-    // --- Player plane ---
     this._player.render(ctx);
-
-    // --- HUD ---
     this._renderHUD(ctx);
-
-    // --- Virtual thumbsticks ---
     this._input.renderSticks(ctx);
 
-    // --- On-screen buttons ---
     _drawHUDButton(ctx, 820, 460, 130, 58, 'WEAPON\nSELECT', '#1a2a3a', '#4488aa');
     _drawHUDButton(ctx, 680, 460, 130, 58, 'EVADE',           '#2a1a3a', '#aa44aa');
   }
 
+  // ==========================================================
+  // BACKGROUND: SKY (static)
+  // ==========================================================
+
+  // The sky is a fixed gradient — it never scrolls.
+  // Deep navy at the top fades to hazy steel-blue at the horizon.
+  // A thin warm glow near the horizon suggests fires burning below.
+  _drawSky(ctx, W, H) {
+    const horizonY = H * 0.72;
+
+    // Main sky gradient
+    const sky = ctx.createLinearGradient(0, 0, 0, horizonY);
+    sky.addColorStop(0.00, '#07101f'); // Deep navy at zenith
+    sky.addColorStop(0.65, '#122848'); // Dark steel blue mid-sky
+    sky.addColorStop(1.00, '#2a4060'); // Hazy blue at horizon
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, horizonY);
+
+    // Warm amber haze just above the horizon — distant fires in enemy territory
+    const haze = ctx.createLinearGradient(0, horizonY - 38, 0, horizonY);
+    haze.addColorStop(0, 'rgba(150, 70, 15, 0)');
+    haze.addColorStop(1, 'rgba(150, 70, 15, 0.22)');
+    ctx.fillStyle = haze;
+    ctx.fillRect(0, horizonY - 38, W, 38);
+
+    // Static stars near the top of the sky
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    [
+      [45, 12, 1.1], [150, 28, 0.9], [270, 10, 1.2], [400, 22, 0.8],
+      [520, 8,  1.0], [640, 32, 0.9], [760, 18, 1.1], [880, 9,  0.8],
+      [100, 52, 0.7], [340, 44, 1.0], [590, 48, 0.8], [820, 38, 0.9],
+    ].forEach(([sx, sy, r]) => {
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  // ==========================================================
+  // BACKGROUND: GROUND (scrolling)
+  // ==========================================================
+
+  // The ground scrolls right-to-left by tiling a 960px-wide pattern.
+  //
+  // HOW SEAMLESS TILING WORKS:
+  //   Each frame, _groundOffset grows by (scrollSpeed * dt) pixels.
+  //   We compute  shift = _groundOffset % TILE_W  (always 0–959).
+  //   Then we draw tiles starting at x = -shift, stepping by TILE_W:
+  //     tile at x = -shift          (partially off-screen left)
+  //     tile at x = -shift + 960    (fills the right remainder)
+  //   Together they always cover the full 960px canvas.
+  //   When shift wraps from 959 back to 0, both tiles are in the same
+  //   relative positions — the seam is invisible because the tile
+  //   content at its left edge matches its right edge.
+  _drawGround(ctx, W, H) {
+    const horizonY = H * 0.72;
+    const groundH  = H - horizonY;
+
+    // Solid base fill — arid, dusty earth
+    const base = ctx.createLinearGradient(0, horizonY, 0, H);
+    base.addColorStop(0.00, '#4a3820'); // Sandy tan near horizon
+    base.addColorStop(0.35, '#3c2e16'); // Darker mid-ground
+    base.addColorStop(1.00, '#2a2010'); // Dark base at screen bottom
+    ctx.fillStyle = base;
+    ctx.fillRect(0, horizonY, W, groundH);
+
+    // Horizon edge — crisp line separating sky from ground
+    ctx.strokeStyle = '#5e4a28';
+    ctx.lineWidth   = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, horizonY);
+    ctx.lineTo(W, horizonY);
+    ctx.stroke();
+
+    // Draw scrolling detail tiles
+    const shift = this._groundOffset % this._TILE_W;
+    for (let tileX = -shift; tileX < W; tileX += this._TILE_W) {
+      this._drawGroundTile(ctx, tileX, horizonY, groundH);
+    }
+  }
+
+  // Draws one full tile of ground detail at the given x position.
+  // Called once or twice per frame (for the two side-by-side tiles).
+  // All feature positions are relative to tileX, so results are identical
+  // for every tile copy — this is what makes the loop seamless.
+  _drawGroundTile(ctx, tileX, horizonY, groundH) {
+    this._groundFeatures.forEach(f => {
+      // f.x is the feature's position within the tile (0–960)
+      // f.y is a 0–1 fraction of ground height (0 = horizon, 1 = screen bottom)
+      f.draw(ctx, tileX + f.x, horizonY + f.y * groundH, f);
+    });
+  }
+
+  // ==========================================================
+  // HUD
+  // ==========================================================
+
   _renderHUD(ctx) {
     const W = ctx.canvas.width;
 
-    // Health bar (top-left)
     ctx.fillStyle = '#aaccdd';
     ctx.font      = '13px Arial';
     ctx.textAlign = 'left';
     ctx.fillText('HULL', 12, 24);
     this._player.health.renderBar(ctx, 55, 10, 180, 18);
 
-    // Mode label (top-center)
     ctx.fillStyle = '#5bc8f5';
     ctx.font      = 'bold 16px Arial';
     ctx.textAlign = 'center';
     ctx.fillText('✈  PILOT MODE', W / 2, 24);
 
-    // Timer (top-right)
     ctx.fillStyle = '#aaaaaa';
     ctx.font      = '14px Arial';
     ctx.textAlign = 'right';
@@ -234,10 +307,121 @@ class PilotGameState {
 }
 
 /* ============================================================
+   GROUND FEATURE BUILDER
+   ============================================================
+   Returns an array of feature objects. Each object stores:
+     x     — pixel position within the 960px tile (0–960)
+     y     — fractional depth in the ground area (0 = horizon, 1 = bottom)
+     draw  — function(ctx, px, py, self) that renders the feature
+
+   Built once in the constructor and reused every frame.
+   The draw functions use only ctx primitives — no images needed.
+   ============================================================ */
+
+function _buildGroundFeatures() {
+  const features = [];
+
+  // ---- Roads ----
+  // Each road spans the full 960px tile width so it appears as a continuous
+  // horizontal band across the scrolling ground.
+  [[0.13], [0.52]].forEach(([yFrac]) => {
+    features.push({
+      x: 0, y: yFrac,
+      draw(ctx, px, py) {
+        // Dark asphalt strip
+        ctx.fillStyle = 'rgba(30, 22, 14, 0.78)';
+        ctx.fillRect(px, py - 5, 960, 10);
+        // Faded centre-line dashes (spacing chosen to look natural at scroll speed)
+        ctx.fillStyle = 'rgba(58, 48, 32, 0.55)';
+        for (let mx = 0; mx < 960; mx += 60) {
+          ctx.fillRect(px + mx, py - 1, 28, 2);
+        }
+      },
+    });
+  });
+
+  // ---- Bomb craters ----
+  // Dark elliptical pits with a sandy ejecta ring around them.
+  [
+    [75,  0.28, 14], [195, 0.65, 17], [330, 0.38, 11],
+    [460, 0.72, 19], [560, 0.22, 13], [680, 0.58, 15],
+    [790, 0.42, 12], [900, 0.75, 18],
+  ].forEach(([fx, fy, r]) => {
+    features.push({
+      x: fx, y: fy, r,
+      draw(ctx, px, py, f) {
+        // Sandy blast ring (disturbed earth kicked outward by the explosion)
+        ctx.fillStyle = 'rgba(100, 78, 38, 0.60)';
+        ctx.beginPath();
+        ctx.ellipse(px, py, f.r * 1.75, f.r * 0.88, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Dark crater pit
+        ctx.fillStyle = 'rgba(16, 10, 4, 0.90)';
+        ctx.beginPath();
+        ctx.ellipse(px, py, f.r, f.r * 0.50, 0, 0, Math.PI * 2);
+        ctx.fill();
+      },
+    });
+  });
+
+  // ---- Scorched / burned patches ----
+  // Dark irregular ellipses — napalm strikes, oil fires, vehicle burn-outs.
+  [
+    [145, 0.44, 54, 24], [310, 0.78, 62, 28], [500, 0.30, 46, 20],
+    [720, 0.62, 52, 24], [870, 0.48, 40, 18],
+  ].forEach(([fx, fy, w, h]) => {
+    features.push({
+      x: fx, y: fy, w, h,
+      draw(ctx, px, py, f) {
+        ctx.fillStyle = 'rgba(14, 9, 3, 0.75)';
+        ctx.beginPath();
+        ctx.ellipse(px, py, f.w / 2, f.h / 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+      },
+    });
+  });
+
+  // ---- Sandy lighter patches ----
+  // Lighter tan ellipses to break up the uniform ground colour and add texture.
+  [
+    [220, 0.55, 52, 22], [490, 0.20, 44, 18], [740, 0.80, 58, 26],
+  ].forEach(([fx, fy, w, h]) => {
+    features.push({
+      x: fx, y: fy, w, h,
+      draw(ctx, px, py, f) {
+        ctx.fillStyle = 'rgba(105, 84, 44, 0.48)';
+        ctx.beginPath();
+        ctx.ellipse(px, py, f.w / 2, f.h / 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+      },
+    });
+  });
+
+  // ---- Rubble piles ----
+  // Clusters of small rectangles simulating broken concrete and debris.
+  [
+    [380, 0.48], [610, 0.33], [820, 0.68], [130, 0.82],
+  ].forEach(([fx, fy]) => {
+    features.push({
+      x: fx, y: fy,
+      draw(ctx, px, py) {
+        ctx.fillStyle = '#38281a';
+        ctx.fillRect(px - 9, py - 4, 7, 5);
+        ctx.fillRect(px + 0, py - 6, 5, 5);
+        ctx.fillRect(px + 6, py - 3, 8, 5);
+        ctx.fillRect(px - 4, py + 1, 6, 3);
+        ctx.fillRect(px + 10, py,    4, 6);
+      },
+    });
+  });
+
+  return features;
+}
+
+/* ============================================================
    LOCAL HELPERS
    ============================================================ */
 
-// Draw a placeholder rectangle representing a future ground enemy
 function _drawPlaceholderEnemy(ctx, x, y, label) {
   ctx.fillStyle   = 'rgba(180, 40, 40, 0.55)';
   ctx.fillRect(x - 20, y, 40, 18);
@@ -250,7 +434,6 @@ function _drawPlaceholderEnemy(ctx, x, y, label) {
   ctx.fillText(label, x, y - 4);
 }
 
-// Draw an on-screen HUD button (weapon select, evade, etc.)
 function _drawHUDButton(ctx, x, y, w, h, label, bgColor, borderColor) {
   ctx.globalAlpha = 0.82;
   ctx.fillStyle   = bgColor;
@@ -261,12 +444,12 @@ function _drawHUDButton(ctx, x, y, w, h, label, bgColor, borderColor) {
   ctx.lineWidth   = 1.5;
   ctx.strokeRect(x, y, w, h);
 
-  ctx.fillStyle   = '#ffffff';
-  ctx.font        = 'bold 14px Arial';
-  ctx.textAlign   = 'center';
+  ctx.fillStyle = '#ffffff';
+  ctx.font      = 'bold 14px Arial';
+  ctx.textAlign = 'center';
 
-  const lines = label.split('\n');
-  const lineH = 17;
+  const lines  = label.split('\n');
+  const lineH  = 17;
   const startY = y + h / 2 - (lines.length - 1) * lineH / 2 + 5;
   lines.forEach((line, i) => ctx.fillText(line, x + w / 2, startY + i * lineH));
 }
