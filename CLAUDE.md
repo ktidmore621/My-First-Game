@@ -132,24 +132,29 @@ Touch events use the left/right screen halves for left/right sticks. Mouse event
 
 ### HealthSystem (`js/entities/HealthSystem.js`)
 ```javascript
-const hp = new HealthSystem(100);      // maxHealth = 100
-hp.takeDamage(30);                     // currentHealth → 70
-hp.heal(10);                           // currentHealth → 80
-hp.getPercent();                       // → 0.80
-hp.isAlive();                          // → true
-hp.onDeath(() => console.log('dead')); // callback
+const hp = new HealthSystem(100);                     // maxHealth = 100
+hp.takeDamage(30);                                    // currentHealth → 70
+hp.heal(10);                                          // currentHealth → 80
+hp.getPercent();                                      // → 0.80
+hp.isAlive();                                         // → true
+hp.reset();                                           // restore to maxHealth
+hp.onDamage((amount, remaining) => { /* ... */ });    // callback on each hit
+hp.onDeath(() => console.log('dead'));                // callback on death
 hp.renderBar(ctx, x, y, width, height);
 ```
 
-Health bar color transitions: Green (full) → Yellow (half) → Red (critical).
+Both `onDamage` and `onDeath` return `this` for chaining. Multiple callbacks can be registered on the same instance. Health bar color transitions: Green (full) → Yellow (half) → Red (critical).
 
 ### Plane (`js/entities/Plane.js`)
 ```javascript
 const p = new Plane({ id, name, speed, durability, weaponSize, maneuverability, x, y, color });
-p.health    // HealthSystem instance
-p.render(ctx)  // triangle placeholder + health bar
+p.health       // HealthSystem instance
+p.render(ctx)  // triangle placeholder + health bar (uses ctx.ellipse for cockpit — Style Guide violation)
 p.reset(x, y)  // restore health, reset velocity + position
+p.isAlive()    // convenience wrapper for p.health.isAlive()
 ```
+
+Optional constructor fields: `width` (default 64), `height` (default 28). All stats default to 50 if omitted.
 
 The four stats (all 0–100):
 | Stat | Effect |
@@ -225,10 +230,11 @@ Ground features built by `_buildGroundFeatures()` — all positioned in 0–960 
 
 - Right stick rotates the gun barrel; aim is clamped to the upper hemisphere (can't aim into the ground)
 - "FIRE" button (bottom-right) is a placeholder — logs aim angle to console
-- Gun health: 150 HP; destruction triggers GameOverState (`'defeated'`)
+- Gun health: 150 HP; destruction triggers GameOverState (`'defeated'`); score = `elapsed * 8`
 - "← Back" button (top-left) returns to MainMenuState
 - Aim angle readout in degrees shown bottom-left (development helper)
-- 30-second auto-game-over with `'survived'` result (placeholder)
+- 30-second auto-game-over with `'survived'` result (placeholder); score = `elapsed * 8`
+- Note: `GunnerGameState.render()` does **not** set `ctx.imageSmoothingEnabled = false`
 
 ---
 
@@ -252,7 +258,7 @@ Ground features built by `_buildGroundFeatures()` — all positioned in 0–960 
 
 - **Default branch**: `master`
 - **Feature branches**: `claude/<task-slug>`
-- **Active branch**: `claude/claude-md-mm2vwmrxe931ydtt-YwkRD`
+- **Active branch**: `claude/claude-md-mm2w5onwii8h2gkg-a9j7x`
 - Never push to `master` without explicit permission
 - Commit messages: imperative, one logical change per commit
 - Push with: `git push -u origin <branch-name>`
@@ -318,7 +324,8 @@ These are the recommended next steps to turn this foundation into a playable gam
 - **No build step** — edit files, refresh browser, that's it
 - **No external libraries** — keep it dependency-free unless there's a compelling reason
 - **`_drawButton` is a global helper** defined at the bottom of `MainMenuState.js` — all state files can call it since it loads first among the states
-- **`_drawHUDButton` is a file-scoped helper** defined at the bottom of `PilotGameState.js` — it is only available within that file; do not call it from other states (use `_drawButton` or define a local equivalent instead)
+- **`_drawHUDButton` is a file-scoped helper** defined at the bottom of `PilotGameState.js` — it is only available within that file; do not call it from other states (use `_drawButton` or define a local equivalent instead). It supports multiline labels via `\n` in the label string.
+- **`_drawPlaceholderEnemy` is a file-scoped helper** defined at the bottom of `PilotGameState.js` — draws a red placeholder box + label above a position; only used there for the static AA Gun / Missile / Base markers
 - **Script load order matters** — `index.html` loads files in dependency order; add new scripts in the right place
 - **gameData is the inter-state bus** — store anything that needs to survive a state transition there
 - **All coordinates are in game space (960×540)** — never use `window.innerWidth/Height` in game logic
@@ -326,7 +333,11 @@ These are the recommended next steps to turn this foundation into a playable gam
 - **`ctx.save()` / `ctx.restore()` around every transform** — prevents cascading matrix bugs
 - **Death callbacks use `setTimeout(800ms)`** — brief delay before transitioning to GameOverState; `_gameOverPending` flag prevents duplicate triggers
 - **`ctx.imageSmoothingEnabled = false` is currently only set in `PilotGameState.render()`** — it is missing from `GunnerGameState`, `MainMenuState`, `PlaneSelectState`, `GameOverState`, and `Plane.render()`. Any new `render()` method must set it at the very top.
-- **`GunnerGameState` does not yet follow the Visual Style Guide** — its sky uses `createLinearGradient` and its gun turret uses `ctx.arc()`, both violating Style Guide rules 1 and 4. These should be converted to flat-band `fillRect` equivalents when refactoring that state.
+- **Multiple states still violate the Visual Style Guide** — any new `render()` code must not repeat these patterns; fix them when refactoring those files:
+  - `GunnerGameState.render()` — sky uses `createLinearGradient`; turret body uses `ctx.arc()` (rules 1 & 4)
+  - `MainMenuState.render()` — sky uses `createLinearGradient`; stars use `ctx.arc()` (rules 1 & 4)
+  - `PlaneSelectState._drawCard()` — cockpit glint uses `ctx.ellipse()` (rule 4)
+  - `Plane.render()` — cockpit highlight uses `ctx.ellipse()` (rule 4)
 - **`window.game`** is exposed in `main.js` for browser console debugging: `game.stateManager`, `game.input`, `game.gameLoop`, `game.gameData`
 - Avoid adding unrequested scaffolding, dependencies, or "improvements" beyond the task at hand
 - Update this `CLAUDE.md` whenever the folder structure, conventions, or systems change significantly
