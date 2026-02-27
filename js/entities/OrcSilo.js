@@ -188,6 +188,10 @@ class OrcSilo {
       })),
     }));
 
+    // ---- In-flight missile smoke trail particles ----
+    // Each puff: { worldX, y, age } — 2×2 dark-grey px spawned at flame tip each frame
+    this._smokeTrailParticles = [];
+
     // ---- Damage-state rendering flags ----
     this._crackLeft      = false; // zigzag on rim left section after hit 2
     this._scorchVisible  = false; // scorch marks on collar after hit 4
@@ -245,6 +249,7 @@ class OrcSilo {
     // Always update mid-air explosions, even while the silo is dying
     this._updateMidairExplosions(dt);
     this._updateLaunchSmoke(dt);
+    this._updateSmokeTrail(dt);
     this._updateImpactExplosions(dt);
 
     if (this._dying) {
@@ -287,6 +292,20 @@ class OrcSilo {
 
       m.worldX += m.velocityX * dt;
       m.y      += m.velocityY * dt;
+
+      // Spawn 4 smoke trail particles at the outer-flame tip each frame.
+      // Tip is 40 px behind the missile centre (body tail +12 px, outer flame +28 px).
+      // nx/ny: unit vector pointing forward; tip is in the opposite direction.
+      const nx = m.velocityX / MISSILE_SPEED;  // cos(heading)
+      const ny = m.velocityY / MISSILE_SPEED;  // sin(heading)
+      const tipWX = m.worldX - nx * 40;
+      const tipSY = m.y      - ny * 40;
+      this._smokeTrailParticles.push(
+        { worldX: tipWX - 1, y: tipSY - 1, age: 0 },
+        { worldX: tipWX + 1, y: tipSY,     age: 0 },
+        { worldX: tipWX,     y: tipSY + 1, age: 0 },
+        { worldX: tipWX - 1, y: tipSY + 1, age: 0 },
+      );
 
       // Deactivate after max flight time or if well off-screen vertically
       if (m.age > MISSILE_TRACKING_DURATION * 3 || m.y < -200) m.active = false;
@@ -720,6 +739,17 @@ class OrcSilo {
       p.y   += p.vy * dt;
     });
     this._launchSmoke = this._launchSmoke.filter(p => p.age < 2.0);
+  }
+
+  // Advances missile smoke trail particles; removes those older than 0.4 s.
+  // Particles drift upward ~18 px/s in screen space so they linger visibly
+  // behind the missile path after it has moved on.
+  _updateSmokeTrail(dt) {
+    this._smokeTrailParticles.forEach(p => {
+      p.age += dt;
+      p.y   -= 18 * dt;  // drift upward in screen space
+    });
+    this._smokeTrailParticles = this._smokeTrailParticles.filter(p => p.age < 0.4);
   }
 
   // Renders launch smoke puffs in world-space (screen X = wx - cameraX).
@@ -2063,6 +2093,18 @@ class OrcSilo {
   // drawn on top (lasts 2 render frames ≈ 2/60 s).
   // ----------------------------------------------------------------
   _renderMissiles(ctx, cameraX) {
+    // ---- Missile smoke trail particles — rendered first so they appear behind sprites ----
+    // 2×2 px dark-grey puffs that linger in world space after the missile passes.
+    // Linear alpha fade over their 0.4 s lifetime.
+    if (this._smokeTrailParticles.length > 0) {
+      ctx.fillStyle = '#444444';
+      this._smokeTrailParticles.forEach(p => {
+        ctx.globalAlpha = Math.max(0, 1.0 - p.age / 0.4);
+        ctx.fillRect(Math.round(p.worldX - cameraX), Math.round(p.y), 2, 2);
+      });
+      ctx.globalAlpha = 1.0;
+    }
+
     this._missiles.forEach(m => {
       if (!m.active) return;
       const sx = Math.round(m.worldX - cameraX);
@@ -2085,14 +2127,53 @@ class OrcSilo {
       ctx.translate(sx, sy);
       ctx.rotate(renderAngle + Math.PI / 2);
 
-      // ---- Engine glow / exhaust flame — drawn first; body paints over seam ----
-      // Flame is at the tail (+y, opposite the tip) regardless of rotation.
-      ctx.fillStyle = '#ff8c00';
-      ctx.fillRect(-5,  12, 10, 6);   // outer amber flame (10×6 px)
-      ctx.fillStyle = '#ffff00';
-      ctx.fillRect(-4,  13,  8, 4);   // inner yellow flame (8×4 px)
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(-2,  14,  4, 2);   // white-hot core (4×2 px)
+      // ---- In-flight flame trail — 3-layer tapered flame, 2-frame flicker ----
+      // Drawn before fins/body so the fuselage base paints over the flame root.
+      // Flame always trails at local +y (the tail), opposite the warhead tip at −y.
+      // Frame alternates each 60fps tick via missile age → slight length variation
+      // creates a flicker without being distracting.
+      const flameFrame = Math.floor(m.age * 60) % 2;
+
+      // Layer 1 — Outer flame: deep orange #cc4400
+      // 6 fillRect slices tapering from 10 px wide at base (y=+12) to 1 px at tip.
+      // Full frame: 28 px long (tip at y=+40); short frame: 37 px → omit final slice.
+      ctx.fillStyle = '#cc4400';
+      ctx.fillRect(-5,  12, 10, 6);   // base slice — 10 px wide
+      ctx.fillRect(-4,  18,  8, 5);   // slice 2    —  8 px wide
+      ctx.fillRect(-3,  23,  6, 4);   // slice 3    —  6 px wide
+      ctx.fillRect(-2,  27,  4, 4);   // slice 4    —  4 px wide
+      ctx.fillRect(-1,  31,  2, 3);   // slice 5    —  2 px wide
+      if (flameFrame === 0) {
+        ctx.fillRect( 0,  34,  1, 6); // tip slice  —  1 px wide (full: y=40)
+      } else {
+        ctx.fillRect( 0,  34,  1, 3); // tip slice  —  1 px wide (short: y=37)
+      }
+
+      // Layer 2 — Mid flame: bright orange #ff6600
+      // 5 slices tapering from 7 px wide at base to 1 px at tip.
+      // Full frame: 20 px long (tip at y=+32); short frame drops last slice (y=+29).
+      ctx.fillStyle = '#ff6600';
+      ctx.fillRect(-3,  12,  7, 6);   // base slice — 7 px wide
+      ctx.fillRect(-2,  18,  5, 4);   // slice 2    — 5 px wide
+      ctx.fillRect(-2,  22,  4, 4);   // slice 3    — 4 px wide
+      ctx.fillRect(-1,  26,  2, 3);   // slice 4    — 2 px wide
+      if (flameFrame === 0) {
+        ctx.fillRect( 0,  29,  1, 3); // tip slice  — 1 px wide (full: y=32)
+      } else {
+        ctx.fillRect( 0,  29,  1, 1); // tip slice  — 1 px wide (short: y=30)
+      }
+
+      // Layer 3 — Inner core: bright yellow-white #ffee44
+      // 4 slices tapering from 4 px wide at base to 1 px at tip.
+      // Full frame: 14 px long (tip at y=+26); short frame: 12 px (tip at y=+24).
+      ctx.fillStyle = '#ffee44';
+      ctx.fillRect(-2,  12,  4, 5);   // base slice — 4 px wide
+      ctx.fillRect(-1,  17,  3, 4);   // slice 2    — 3 px wide
+      ctx.fillRect(-1,  21,  2, 3);   // slice 3    — 2 px wide
+      if (flameFrame === 0) {
+        ctx.fillRect( 0,  24,  1, 2); // tip slice  — 1 px wide (full: y=26)
+      }
+      // short frame: omit tip → core ends at y=+24
 
       // ---- Stabilizer fins — dark metal flanges bracketing the tail ----
       ctx.fillStyle = '#383028';
@@ -2106,6 +2187,32 @@ class OrcSilo {
       ctx.fillRect(-5,  3, 10,  1);   // horizontal panel seam (near mid-body)
       ctx.fillStyle = '#6a6050';
       ctx.fillRect(-5, -6,  1, 18);   // left-edge highlight (depth)
+
+      // ---- Orc military glyph — crude paw print on upper fuselage ----
+      // Painted by an orc before loading — rough and slightly uneven.
+      // Centred at approx (0, 0) in local sprite space, between warhead
+      // base (y=−6) and stabiliser fins (y=+6). Rotates with the missile
+      // so it always appears on the same side of the body.
+      //
+      // Base colour: dark green #1a4a00
+      // Highlight:   brighter green #2a6a00, offset 1 px to the left (x−1)
+      //              — suggests a thick brush stroke with light from the right.
+      //
+      // Design: wide 4×3 px palm + three 1×2 px finger marks spreading upward.
+      //   Palm centre: x=−2…+2, y=0…+3
+      //   Left finger : x=−3, y=−2…0  (leftmost, at standard height)
+      //   Centre finger: x=−1, y=−3…−1 (tallest, 1 px higher)
+      //   Right finger : x=+1, y=−2…0  (rightmost, at standard height)
+      ctx.fillStyle = '#1a4a00';
+      ctx.fillRect(-2,  0, 4, 3);   // palm block (4×3 px)
+      ctx.fillRect(-3, -2, 1, 2);   // left finger   (1×2 px)
+      ctx.fillRect(-1, -3, 1, 2);   // centre finger (1×2 px, 1 px higher)
+      ctx.fillRect( 1, -2, 1, 2);   // right finger  (1×2 px)
+      ctx.fillStyle = '#2a6a00';    // highlight — 1 px left offset
+      ctx.fillRect(-3,  0, 4, 3);   // palm highlight
+      ctx.fillRect(-4, -2, 1, 2);   // left finger highlight
+      ctx.fillRect(-2, -3, 1, 2);   // centre finger highlight
+      ctx.fillRect( 0, -2, 1, 2);   // right finger highlight
 
       // ---- Voidheart side-glow flanges — fuselage-to-warhead bracket ----
       ctx.fillStyle = '#440030';
