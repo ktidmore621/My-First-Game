@@ -88,13 +88,15 @@ class OrcCannon {
     this._platformTilt = 0;    // 3px offset applied to platform + orc + cannon after hit 4
 
     // ---- Death / explosion animation ----
-    this._dying          = false;
-    this._dead           = false;
-    this._deathTimer     = 0;
-    // Three particle arrays populated by _spawnDebris() on death:
-    this._burstFragments = []; // frame 2: purplish-red burst chunks
-    this._goldDebris     = []; // frame 3: scattering gold/yellow pixels
-    this._smokeParticles = []; // frame 4: lingering dark purple smoke
+    this._dying           = false;
+    this._dead            = false;
+    this._deathTimer      = 0;
+    // Five particle arrays populated by _spawnDebris() on death:
+    this._burstFragments  = []; // frame 2: 12+ mixed-size Voidheart burst chunks
+    this._sparkPixels     = []; // frame 2: 8+ fast 1px white/yellow sparks
+    this._goldDebris      = []; // frame 3: 2×2 gold/yellow scatter (wider spread)
+    this._smokeParticles  = []; // frame 4: dark purple + deep grey smoke rectangles
+    this._smokeGoldSparks = []; // frame 4: lingering gold spark pixels in the smoke
 
     // ---- Callback: track hit count for progressive damage visuals ----
     this.health.onDamage(() => {
@@ -329,48 +331,85 @@ class OrcCannon {
   // Cannon centre for explosion purposes: approx x=0, y=-120 (upper half).
   _spawnDebris() {
 
-    // ---- Frame 2: purplish-red burst — 10 large chunks fly outward ----
+    // ---- Frame 2: Voidheart burst — 14 fragments in 2×2, 3×3, and 4×4 sizes ----
+    // Colors: deep purplish-red, bright pink, dark brass-gold.
+    // Each fragment starts at the cannon centre and flies radially outward.
     this._burstFragments = [
-      { x:  -4, y: -120, w: 14, h:  8, vx: -170, vy: -210, color: '#8a0060' },
-      { x:   2, y: -115, w: 10, h: 10, vx:  190, vy: -240, color: '#b01890' },
-      { x:  -7, y: -100, w: 16, h:  6, vx: -130, vy: -170, color: '#cc1880' },
-      { x:   5, y: -105, w: 12, h:  8, vx:  150, vy: -190, color: '#aa0050' },
-      { x:  -2, y: -130, w: 10, h:  6, vx:  -80, vy: -260, color: '#660048' },
-      { x:   0, y: -110, w:  8, h: 10, vx:   60, vy: -140, color: '#9a0070' },
-      { x:  -5, y:  -95, w: 14, h:  6, vx: -190, vy: -120, color: '#bb1070' },
-      { x:   3, y: -125, w:  8, h:  8, vx:  120, vy: -280, color: '#aa0050' },
-      { x:   1, y: -118, w: 12, h:  6, vx:  -40, vy: -230, color: '#8a0060' },
-      { x:  -3, y: -108, w:  8, h: 10, vx:  230, vy: -150, color: '#cc1880' },
+      // 2×2 fragments — fast, light, scatter to the edges
+      { x: 0, y: -120, w: 2, h: 2, vx: -220, vy: -280, color: '#6a0040' },
+      { x: 0, y: -120, w: 2, h: 2, vx:  240, vy: -260, color: '#ff40cc' },
+      { x: 0, y: -120, w: 2, h: 2, vx: -180, vy: -240, color: '#8a6820' },
+      { x: 0, y: -120, w: 2, h: 2, vx:  200, vy: -300, color: '#6a0040' },
+      // 3×3 fragments — medium weight, mid-range scatter
+      { x: 0, y: -120, w: 3, h: 3, vx: -150, vy: -200, color: '#aa0060' },
+      { x: 0, y: -120, w: 3, h: 3, vx:  170, vy: -220, color: '#ff40cc' },
+      { x: 0, y: -120, w: 3, h: 3, vx:  -80, vy: -260, color: '#7a5818' },
+      { x: 0, y: -120, w: 3, h: 3, vx:  100, vy: -180, color: '#aa0060' },
+      { x: 0, y: -120, w: 3, h: 3, vx: -250, vy: -130, color: '#cc20a0' },
+      { x: 0, y: -120, w: 3, h: 3, vx:   60, vy: -310, color: '#8a6820' },
+      // 4×4 fragments — heavier chunks, slower and closer to origin
+      { x: 0, y: -120, w: 4, h: 4, vx: -190, vy: -160, color: '#880050' },
+      { x: 0, y: -120, w: 4, h: 4, vx:  210, vy: -140, color: '#ff60d0' },
+      { x: 0, y: -120, w: 4, h: 4, vx:  -40, vy: -290, color: '#9a7020' },
+      { x: 0, y: -120, w: 4, h: 4, vx:  260, vy: -170, color: '#660040' },
     ];
 
-    // ---- Frame 3: gold debris — 12 small 2×2 and 4×4 px rectangles ----
-    // Higher velocity than burst fragments; scatter further outward.
+    // ---- Frame 2: spark pixels — 10 single-pixel sparks, faster than fragments ----
+    // Bright white and bright yellow; scatter further out due to lighter mass.
+    // Some remain visible during the smoke phase as lingering hot embers.
+    this._sparkPixels = [
+      { x: 0, y: -120, vx: -310, vy: -350, color: '#ffffff' },
+      { x: 0, y: -120, vx:  330, vy: -320, color: '#ffff00' },
+      { x: 0, y: -120, vx: -280, vy: -380, color: '#ffffff' },
+      { x: 0, y: -120, vx:  300, vy: -360, color: '#ffff44' },
+      { x: 0, y: -120, vx:  -90, vy: -400, color: '#ffffff' },
+      { x: 0, y: -120, vx:  110, vy: -390, color: '#ffff00' },
+      { x: 0, y: -120, vx: -350, vy: -200, color: '#ffff44' },
+      { x: 0, y: -120, vx:  370, vy: -190, color: '#ffffff' },
+      { x: 0, y: -120, vx:  -50, vy: -420, color: '#ffff00' },
+      { x: 0, y: -120, vx:  160, vy: -310, color: '#ffffff' },
+    ];
+
+    // ---- Frame 3: gold scatter — 12 tiny 2×2 px fragments ----
+    // Wider velocity spread than burst: Voidheart Ore energy releasing outward.
     this._goldDebris = [
-      { x: 0, y: -120, w: 4, h: 4, vx: -230, vy: -270, color: '#ffd700' },
-      { x: 0, y: -120, w: 2, h: 2, vx:  250, vy: -290, color: '#ffb800' },
-      { x: 0, y: -120, w: 4, h: 4, vx: -170, vy: -250, color: '#ffff80' },
-      { x: 0, y: -120, w: 2, h: 2, vx:  190, vy: -230, color: '#e8c000' },
-      { x: 0, y: -120, w: 4, h: 4, vx:  -70, vy: -300, color: '#ffd700' },
-      { x: 0, y: -120, w: 2, h: 2, vx:   90, vy: -270, color: '#ffff00' },
-      { x: 0, y: -120, w: 4, h: 4, vx: -270, vy: -190, color: '#ffb800' },
-      { x: 0, y: -120, w: 2, h: 2, vx:  270, vy: -180, color: '#ffd700' },
-      { x: 0, y: -120, w: 4, h: 4, vx:  -30, vy: -320, color: '#e8c000' },
-      { x: 0, y: -120, w: 2, h: 2, vx:   30, vy: -310, color: '#ffff80' },
-      { x: 0, y: -120, w: 4, h: 4, vx: -150, vy: -170, color: '#ffd700' },
-      { x: 0, y: -120, w: 2, h: 2, vx:  140, vy: -210, color: '#ffb800' },
+      { x: 0, y: -120, w: 2, h: 2, vx: -280, vy: -300, color: '#ffd700' },
+      { x: 0, y: -120, w: 2, h: 2, vx:  300, vy: -320, color: '#ffff44' },
+      { x: 0, y: -120, w: 2, h: 2, vx: -230, vy: -350, color: '#ffd700' },
+      { x: 0, y: -120, w: 2, h: 2, vx:  250, vy: -370, color: '#ffb800' },
+      { x: 0, y: -120, w: 2, h: 2, vx: -120, vy: -380, color: '#ffff44' },
+      { x: 0, y: -120, w: 2, h: 2, vx:  140, vy: -400, color: '#ffd700' },
+      { x: 0, y: -120, w: 2, h: 2, vx: -340, vy: -230, color: '#ffb800' },
+      { x: 0, y: -120, w: 2, h: 2, vx:  360, vy: -210, color: '#ffff44' },
+      { x: 0, y: -120, w: 2, h: 2, vx:  -30, vy: -420, color: '#ffd700' },
+      { x: 0, y: -120, w: 2, h: 2, vx:   50, vy: -440, color: '#ffff00' },
+      { x: 0, y: -120, w: 2, h: 2, vx: -190, vy: -260, color: '#e8c000' },
+      { x: 0, y: -120, w: 2, h: 2, vx:  200, vy: -280, color: '#ffd700' },
     ];
 
-    // ---- Frame 4: dark purple smoke cloud — 8 large chunks drifting up ----
-    // No gravity — they float upward and fade over 1.5 s.
+    // ---- Frame 4: smoke linger — 10 dark purple + deep grey rectangles ----
+    // Varied sizes; no gravity — rise slowly on thermal heat, fade over 1.5 s.
     this._smokeParticles = [
-      { x: -18, y: -120, w: 12, h: 10, vy: -52, color: '#2a0040' },
-      { x:   8, y: -130, w: 10, h: 12, vy: -43, color: '#380850' },
-      { x:  -4, y: -140, w: 14, h:  8, vy: -62, color: '#1a0030' },
-      { x:  14, y: -110, w:  8, h: 14, vy: -38, color: '#441060' },
-      { x: -14, y: -100, w: 10, h: 10, vy: -48, color: '#2a0040' },
-      { x:   4, y: -145, w: 12, h:  8, vy: -68, color: '#380850' },
-      { x: -22, y: -115, w:  8, h: 12, vy: -33, color: '#1a0030' },
-      { x:  18, y: -125, w: 10, h: 10, vy: -58, color: '#441060' },
+      { x: -18, y: -120, w: 14, h: 10, vy: -52, color: '#2a0040' },
+      { x:   8, y: -130, w: 10, h: 14, vy: -43, color: '#383838' },
+      { x:  -4, y: -140, w: 16, h:  8, vy: -62, color: '#1a0030' },
+      { x:  14, y: -110, w:  8, h: 16, vy: -38, color: '#441060' },
+      { x: -14, y: -100, w: 12, h: 12, vy: -48, color: '#282828' },
+      { x:   4, y: -145, w: 14, h:  8, vy: -68, color: '#380850' },
+      { x: -22, y: -115, w:  8, h: 14, vy: -33, color: '#1a1a1a' },
+      { x:  18, y: -125, w: 12, h: 10, vy: -58, color: '#441060' },
+      { x:  -8, y: -135, w: 10, h: 12, vy: -45, color: '#2a0040' },
+      { x:  26, y: -108, w:  8, h:  8, vy: -36, color: '#333333' },
+    ];
+
+    // ---- Frame 4: lingering gold sparks visible through the smoke ----
+    // Slow drift — these are cooling embers still radiating Voidheart energy.
+    this._smokeGoldSparks = [
+      { x: 0, y: -120, vx:  -80, vy: -180, color: '#ffd700' },
+      { x: 0, y: -120, vx:   90, vy: -200, color: '#ffff44' },
+      { x: 0, y: -120, vx:  -30, vy: -160, color: '#ffb800' },
+      { x: 0, y: -120, vx:   50, vy: -190, color: '#ffd700' },
+      { x: 0, y: -120, vx: -110, vy: -140, color: '#ffff00' },
     ];
   }
 
@@ -384,6 +423,13 @@ class OrcCannon {
       d.vy += 120 * dt; // gravity: 120 px/s² downward
     });
 
+    // Spark pixels: lighter — less gravity, scatter further and stay up longer
+    this._sparkPixels.forEach(d => {
+      d.x  += d.vx * dt;
+      d.y  += d.vy * dt;
+      d.vy += 80 * dt; // gravity: 80 px/s² (lighter than fragments)
+    });
+
     // Gold debris: stronger gravity, scatter wide and fast
     this._goldDebris.forEach(d => {
       d.x  += d.vx * dt;
@@ -394,6 +440,13 @@ class OrcCannon {
     // Smoke: drifts upward only — no gravity, heat rises
     this._smokeParticles.forEach(d => {
       d.y += d.vy * dt;
+    });
+
+    // Smoke gold sparks: slow ember drift with very slight gravity
+    this._smokeGoldSparks.forEach(d => {
+      d.x  += d.vx * dt;
+      d.y  += d.vy * dt;
+      d.vy += 40 * dt; // gravity: 40 px/s² — still rising through most of smoke phase
     });
 
     // Smoke (frame 4) finishes fading at t=1.75; fully done at t=2.0
@@ -884,24 +937,27 @@ class OrcCannon {
   // Draws the 4-frame pixel art explosion.
   // ctx is already translated to (screenX, groundY).
   //
-  // Frame 1 (0.00–0.12 s): white flash fills the full bounding box
-  // Frame 2 (0.00–0.60 s): purplish-red burst chunks fly outward
-  // Frame 3 (0.08–1.00 s): gold debris pixels scatter further out
-  // Frame 4 (0.25–1.75 s): dark purple smoke drifts upward and fades
+  // Frame 1 (0.000–0.033 s / 2 frames): solid white flash, full bounding box
+  // Frame 2 (0.000–0.600 s): 14 Voidheart burst fragments + 10 spark pixels
+  // Frame 3 (0.080–1.000 s): 12 gold/yellow 2×2 fragments scatter wider
+  // Frame 4 (0.250–1.750 s): 10 smoke rectangles + 5 gold sparks, fade over 1.5 s
   _renderExplosion(ctx) {
-    const t = this._deathTimer;
+    const t           = this._deathTimer;
+    const FLASH_FRAMES = 2 / 60; // exactly 2 render frames at 60 fps ≈ 0.033 s
 
     // ---- Frame 1: Bright white flash ----
-    // Fills the full structure bounding box (56×150 px), sharp fast fade.
-    if (t < 0.12) {
-      ctx.globalAlpha = 1.0 - (t / 0.12);
-      ctx.fillStyle   = '#ffffff';
-      ctx.fillRect(-28, -150, 56, 150);
+    // Solid white for exactly 2 frames — no fade, hard cut-off.
+    if (t < FLASH_FRAMES) {
       ctx.globalAlpha = 1.0;
+      ctx.fillStyle   = '#ffffff';
+      ctx.fillRect(-28, -150, 56, 150); // full cannon bounding box
+      ctx.globalAlpha = 1.0;
+      return; // white covers everything; skip remaining frames this pass
     }
 
-    // ---- Frame 2: Purplish-red burst ----
-    // Full alpha until t=0.3 s, then fades out completely by t=0.6 s.
+    // ---- Frame 2: Voidheart burst fragments + spark pixels ----
+    // Fragments: full alpha until t=0.3 s, then fade out by t=0.6 s.
+    // Sparks render at the same alpha alongside fragments.
     if (t < 0.6) {
       const burstAlpha = t < 0.3 ? 1.0 : 1.0 - (t - 0.3) / 0.3;
       ctx.globalAlpha  = Math.max(0, burstAlpha);
@@ -909,12 +965,17 @@ class OrcCannon {
         ctx.fillStyle = d.color;
         ctx.fillRect(Math.round(d.x), Math.round(d.y), d.w, d.h);
       });
+      // Spark pixels scattered among the debris — 1×1 each
+      this._sparkPixels.forEach(d => {
+        ctx.fillStyle = d.color;
+        ctx.fillRect(Math.round(d.x), Math.round(d.y), 1, 1);
+      });
       ctx.globalAlpha = 1.0;
     }
 
-    // ---- Frame 3: Gold debris ----
-    // Appears at t=0.08 s (as flash fades), solid until t=0.53 s,
-    // then fades completely by t=1.0 s.
+    // ---- Frame 3: Gold scatter ----
+    // Appears as flash clears (t=0.08 s), solid until t=0.53 s,
+    // then fades completely by t=1.0 s — Voidheart Ore energy dispersing.
     if (t >= 0.08 && t < 1.0) {
       const goldAge   = t - 0.08;
       const goldAlpha = goldAge < 0.45 ? 1.0 : 1.0 - (goldAge - 0.45) / 0.47;
@@ -926,14 +987,19 @@ class OrcCannon {
       ctx.globalAlpha = 1.0;
     }
 
-    // ---- Frame 4: Dark purple smoke cloud ----
-    // Appears at t=0.25 s, drifts upward, fades to zero over 1.5 s (gone at t=1.75 s).
+    // ---- Frame 4: Smoke cloud + lingering gold sparks ----
+    // Appears at t=0.25 s; fades to zero over 1.5 s (fully gone at t=1.75 s).
     if (t >= 0.25) {
       const smokeAlpha = Math.max(0, 1.0 - (t - 0.25) / 1.5);
       ctx.globalAlpha  = smokeAlpha;
       this._smokeParticles.forEach(d => {
         ctx.fillStyle = d.color;
         ctx.fillRect(Math.round(d.x), Math.round(d.y), d.w, d.h);
+      });
+      // A few gold spark pixels still hot in the cooling smoke column
+      this._smokeGoldSparks.forEach(d => {
+        ctx.fillStyle = d.color;
+        ctx.fillRect(Math.round(d.x), Math.round(d.y), 1, 1);
       });
       ctx.globalAlpha = 1.0;
     }
