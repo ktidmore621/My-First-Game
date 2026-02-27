@@ -71,11 +71,12 @@ class OrcCannon {
     this._fireCooldown = 0;       // counts down 3→0s between shots in firing
     this._pulseT       = 0;       // ever-incrementing time for glow oscillation
 
-    // ---- Outgoing plasma bolts — small pool, max 4 in-flight ----
-    // Each slot: { active, worldX, y, velocityX, velocityY }
-    // worldX and velocityX are world-space; y and velocityY are screen-space.
-    this._bolts = Array.from({ length: 4 }, () => ({
-      active: false, worldX: 0, y: 0, velocityX: 0, velocityY: 0,
+    // ---- Outgoing plasma bolts — small pool, max 5 in-flight ----
+    // Each slot: { active, worldX, y, originY, velocityX, velocityY }
+    // worldX is world-space (static — bolts fire straight up, no X drift).
+    // y and velocityY are screen-space; originY records launch Y for culling.
+    this._bolts = Array.from({ length: 5 }, () => ({
+      active: false, worldX: 0, y: 0, originY: 0, velocityX: 0, velocityY: 0,
     }));
 
     // ---- Damage-state rendering flags ----
@@ -126,14 +127,14 @@ class OrcCannon {
       return;
     }
 
-    // ---- Advance in-flight bolts; cull any that have left the play area ----
+    // ---- Advance in-flight bolts; cull any that have traveled too far ----
     this._bolts.forEach(b => {
       if (!b.active) return;
       b.worldX += b.velocityX * dt;
       b.y      += b.velocityY * dt;
-      // Deactivate when far above screen top, below screen bottom,
-      // or more than 1500 world-px away horizontally (flew past the scene)
-      if (b.y < -60 || b.y > 650 || Math.abs(b.worldX - this.worldX) > 1500) {
+      // Deactivate after 600px of travel from launch point.
+      // Bolts fire straight up so only the Y axis needs measuring.
+      if (Math.abs(b.y - b.originY) > 600) {
         b.active = false;
       }
     });
@@ -285,29 +286,28 @@ class OrcCannon {
   // PRIVATE — FIRING
   // ================================================================
 
-  // Acquire an inactive bolt slot and launch it toward the target's
-  // current position. Shot is NOT tracked — it travels in a straight
-  // line to where the player WAS at the moment of firing.
-  _fireBolt(targetWorldX, targetY) {
+  // Acquire an inactive bolt slot and fire it straight upward from the
+  // barrel tip. The bolt does not track — it travels at a fixed 300 px/s
+  // in the negative-Y direction (upward in screen space), aimed to pass
+  // through the player's altitude at the moment of firing.
+  // targetWorldX / targetY are unused here but kept so call-sites in the
+  // state machine don't need to change if tracking is added later.
+  _fireBolt(targetWorldX, targetY) { // eslint-disable-line no-unused-vars
     const b = this._bolts.find(b => !b.active);
-    if (!b) return; // all 4 slots in-flight — shot dropped silently
+    if (!b) return; // all 5 slots in-flight — shot dropped silently
 
     // Barrel mouth: horizontally centred on the cannon, at the barrel tip
     const tipWorldX = this.worldX;
     const tipY      = this._groundY - 86; // top of the cannon barrel
 
-    // Direction vector from barrel tip to target at time of firing
-    const dx   = targetWorldX - tipWorldX;
-    const dy   = targetY      - tipY;
-    const dist = Math.hypot(dx, dy) || 1; // guard against zero distance
-
-    const SPEED = 300; // world-space px/s
+    const SPEED = 300; // world-space px/s — bolt travels straight upward
 
     b.active    = true;
-    b.worldX    = tipWorldX;
+    b.worldX    = tipWorldX; // fixed in world space — bolt has no X drift
     b.y         = tipY;
-    b.velocityX = (dx / dist) * SPEED;
-    b.velocityY = (dy / dist) * SPEED;
+    b.originY   = tipY;      // reference point for the 600px travel-distance cull
+    b.velocityX = 0;         // no horizontal component — straight up only
+    b.velocityY = -SPEED;    // negative Y = upward in screen space
   }
 
   // ================================================================
