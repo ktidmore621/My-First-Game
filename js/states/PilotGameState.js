@@ -94,9 +94,9 @@ class PilotGameState {
 
     // _worldX: player's current X position in world space (pixels).
     //   Range: [player.width/2 … BATTLEFIELD_W − player.width/2]
-    //   Starts at W/2 so the player appears screen-centred at game start
-    //   with the left edge of the battlefield visible.
-    this._worldX = this._W / 2; // 480 px
+    //   Starts at 250 — safely inside the 500 px spawn-safe zone,
+    //   well clear of the first enemy at world X 800.
+    this._worldX = 250; // safe spawn: 250 px inside the battlefield
 
     // _cameraX: world-space X of the screen's left edge (pixels).
     //   Computed every frame in update(). Range: [0 … BATTLEFIELD_W − W].
@@ -127,19 +127,20 @@ class PilotGameState {
     //
     // Placement order: OrcCannon, OrcSilo, OrcCannon, OrcSilo, OrcCannon, OrcSilo, OrcCannon
     // Formula: each position = previous position + previous width + MIN_ENEMY_SPACING
+    // Safe zone: first 500 world-px clear; first enemy no earlier than world X 800.
     //
     // Calculated world-X centres:
-    //   Cannon 1 :   600   Silo 1 :   960   Cannon 2 : 1520
-    //   Silo 2   : 1880   Cannon 3 : 2440   Silo 3   : 2800   Cannon 4 : 3360
-    let _ex = 600;
+    //   Cannon 1 :   800   Silo 1 : 1160   Cannon 2 : 1720
+    //   Silo 2   : 2080   Cannon 3 : 2640   Silo 3   : 3000   Cannon 4 : 3560
+    let _ex = 800;
     this._enemies = [
-      new OrcCannon(_ex,                                       _groundY), //  600
-      new OrcSilo  (_ex += CANNON_WIDTH + MIN_ENEMY_SPACING,   _groundY), //  960
-      new OrcCannon(_ex += SILO_WIDTH   + MIN_ENEMY_SPACING,   _groundY), // 1520
-      new OrcSilo  (_ex += CANNON_WIDTH + MIN_ENEMY_SPACING,   _groundY), // 1880
-      new OrcCannon(_ex += SILO_WIDTH   + MIN_ENEMY_SPACING,   _groundY), // 2440
-      new OrcSilo  (_ex += CANNON_WIDTH + MIN_ENEMY_SPACING,   _groundY), // 2800
-      new OrcCannon(_ex += SILO_WIDTH   + MIN_ENEMY_SPACING,   _groundY), // 3360
+      new OrcCannon(_ex,                                       _groundY), //  800
+      new OrcSilo  (_ex += CANNON_WIDTH + MIN_ENEMY_SPACING,   _groundY), // 1160
+      new OrcCannon(_ex += SILO_WIDTH   + MIN_ENEMY_SPACING,   _groundY), // 1720
+      new OrcSilo  (_ex += CANNON_WIDTH + MIN_ENEMY_SPACING,   _groundY), // 2080
+      new OrcCannon(_ex += SILO_WIDTH   + MIN_ENEMY_SPACING,   _groundY), // 2640
+      new OrcSilo  (_ex += CANNON_WIDTH + MIN_ENEMY_SPACING,   _groundY), // 3000
+      new OrcCannon(_ex += SILO_WIDTH   + MIN_ENEMY_SPACING,   _groundY), // 3560
     ];
 
     // Register death callback
@@ -178,6 +179,22 @@ class PilotGameState {
     // Duration = 2 frames at 60 fps (≈ 33 ms) — a brief bright flicker.
     this._MUZZLE_FLASH_DURATION = 2 / 60;
     this._muzzleFlashTimer      = 0;
+
+    // ================================================================
+    // SPAWN INVINCIBILITY
+    // ================================================================
+    // 2-second grace period after spawn: player cannot take damage.
+    // A 2 Hz pulsing 1px cyan outline confirms the shield is active.
+    this._spawnInvincible = true;
+    this._invincibleTimer = 2.0; // seconds of invincibility remaining
+    this._invinciblePulse = 0;   // time accumulator driving the shimmer pulse
+
+    // ================================================================
+    // TARGET DIRECTION ARROW
+    // ================================================================
+    // Time accumulator for the 0.6-second size-pulse on the arrow
+    // that appears when no threats remain ahead in the direction of travel.
+    this._arrowPulseT = 0;
   }
 
   enter() {
@@ -194,6 +211,18 @@ class PilotGameState {
 
   update(dt) {
     this._elapsedTime += dt;
+
+    // ---- Spawn invincibility countdown ----
+    // Ticks down for 2 seconds after entering the state. While active the
+    // player cannot take damage. _invinciblePulse drives the shimmer render.
+    if (this._spawnInvincible) {
+      this._invincibleTimer -= dt;
+      this._invinciblePulse += dt;
+      if (this._invincibleTimer <= 0) this._spawnInvincible = false;
+    }
+
+    // ---- Target arrow pulse accumulator ----
+    this._arrowPulseT += dt;
 
     // ---- Player movement ----
     // velocityX moves the player through WORLD space (drives _worldX).
@@ -313,7 +342,8 @@ class PilotGameState {
       // the fourth (cameraX) — extra args are silently dropped by JS.
       enemy.update(dt, this._worldX, this._player.y, this._cameraX);
 
-      if (this._player.isAlive()) {
+      // Spawn invincibility blocks all incoming damage for the first 2 seconds.
+      if (this._player.isAlive() && !this._spawnInvincible) {
         // ---- OrcCannon: plasma bolt → player ----
         // 10 damage per bolt. Scout (38 HP) down in 4 hits; Bomber (95 HP) in 10.
         if (typeof enemy.checkBoltsHitPlayer === 'function') {
@@ -401,8 +431,10 @@ class PilotGameState {
     }
 
     this._player.render(ctx);
+    if (this._spawnInvincible) this._renderShieldShimmer(ctx); // 2-second grace shimmer
     this._renderProjectiles(ctx);    // plasma bolts drawn in front of the ship
     this._renderMuzzleFlash(ctx);    // brief firing flash on top of world-space objects
+    this._renderTargetArrow(ctx);    // directional arrow when no threats lie ahead
     this._renderHUD(ctx);
     this._input.renderSticks(ctx);
 
@@ -641,6 +673,126 @@ class PilotGameState {
 
     ctx.restore();
   }
+
+  // ================================================================
+  // SPAWN SHIELD SHIMMER
+  // ================================================================
+
+  // Draws a 1 px bright-cyan outline around the player ship while spawn
+  // invincibility is active. Pulses at 2 Hz (twice per second) by
+  // oscillating globalAlpha between 0.5 and 1.0 using a sine wave.
+  // Matches the ship's rotation so it always hugs the hull outline.
+  _renderShieldShimmer(ctx) {
+    const alpha = 0.75 + 0.25 * Math.sin(this._invinciblePulse * Math.PI * 4); // 2 Hz
+    const pw    = this._player.width  + 4; // 4 px wider than the visual hull
+    const ph    = this._player.height + 4;
+
+    ctx.save();
+    ctx.translate(this._player.x, this._player.y);
+    ctx.rotate(this._player.angle || 0);
+    ctx.globalAlpha  = alpha;
+    ctx.strokeStyle  = '#80ffff'; // bright cyan — unmistakable shield tint
+    ctx.lineWidth    = 1;
+    ctx.strokeRect(-pw / 2, -ph / 2, pw, ph);
+    ctx.restore();
+  }
+
+  // ================================================================
+  // TARGET DIRECTION ARROW
+  // ================================================================
+
+  // Shows a pulsing red arrow on the screen edge when the player is
+  // moving away from all remaining alive enemies. The arrow points back
+  // toward the threat cluster so the player knows where to turn.
+  //
+  // Trigger condition:
+  //   • Player is moving right (velocityX > 5): all alive enemies have
+  //     worldX < player worldX → show left-pointing arrow on left edge.
+  //   • Player is moving left  (velocityX < −5): all alive enemies have
+  //     worldX > player worldX → show right-pointing arrow on right edge.
+  //
+  // Size pulses 100 %→120 % on a 0.6-second cycle to draw the eye.
+  _renderTargetArrow(ctx) {
+    const aliveEnemies = this._enemies.filter(e => e.isAlive());
+    if (aliveEnemies.length === 0) return; // all dead — mission clear, no arrow
+
+    const vx          = this._player.velocityX;
+    const facingRight = vx > 5;
+    const facingLeft  = vx < -5;
+    if (!facingRight && !facingLeft) return; // hovering — no movement direction
+
+    // Determine arrow direction (toward remaining enemies)
+    let arrowDir = null;
+    if (facingRight) {
+      const hasEnemyAhead = aliveEnemies.some(e => e.worldX > this._worldX);
+      if (!hasEnemyAhead) arrowDir = 'left'; // all enemies behind — point left
+    } else {
+      const hasEnemyAhead = aliveEnemies.some(e => e.worldX < this._worldX);
+      if (!hasEnemyAhead) arrowDir = 'right'; // all enemies behind — point right
+    }
+    if (!arrowDir) return; // threats are still ahead — arrow not needed
+
+    // Size pulse: 1.0 → 1.2 on a 0.6-second sine cycle
+    const scale = 1.0 + 0.1 * (1.0 + Math.sin(this._arrowPulseT * (Math.PI * 2 / 0.6)));
+    const aw    = Math.round(24 * scale); // arrow bounding-box width
+    const ah    = Math.round(32 * scale); // arrow bounding-box height
+    const halfH = Math.floor(ah / 2);
+    const midY  = Math.round(this._H / 2);
+    const PAD   = 8; // px from screen edge to near side of arrow
+
+    ctx.save();
+
+    if (arrowDir === 'left') {
+      // Left-pointing triangle: tip at left, flat base at right.
+      // bx = world x of the arrow's left (tip) edge.
+      const bx = PAD;
+
+      // Dark red 1 px outline — draw rows slightly outside the fill shape
+      ctx.fillStyle = '#8b0000';
+      for (let row = -1; row <= ah; row++) {
+        const dist = Math.abs(row - halfH + 0.5) / (halfH + 0.5);
+        const w    = Math.max(2, Math.round((aw + 2) * (1.0 - Math.min(1, dist))));
+        ctx.fillRect(bx + aw + 1 - w, midY - halfH - 1 + row, w, 1);
+      }
+
+      // Bright red fill — right-aligned rows taper to a point at the left
+      ctx.fillStyle = '#ff2020';
+      for (let row = 0; row < ah; row++) {
+        const dist = Math.abs(row - halfH + 0.5) / halfH;
+        const w    = Math.max(1, Math.round(aw * (1.0 - Math.min(1, dist))));
+        ctx.fillRect(bx + aw - w, midY - halfH + row, w, 1);
+      }
+
+      // Pixel-art "TARGETS" label centred above the arrow
+      _drawPixelText(ctx, bx + aw / 2, midY - halfH - 16, 'TARGETS', '#ff2020');
+
+    } else {
+      // Right-pointing triangle: flat base at left, tip at right.
+      // bx = world x of the arrow's left (base) edge.
+      const bx = this._W - PAD - aw;
+
+      // Dark red 1 px outline
+      ctx.fillStyle = '#8b0000';
+      for (let row = -1; row <= ah; row++) {
+        const dist = Math.abs(row - halfH + 0.5) / (halfH + 0.5);
+        const w    = Math.max(2, Math.round((aw + 2) * (1.0 - Math.min(1, dist))));
+        ctx.fillRect(bx - 1, midY - halfH - 1 + row, w, 1);
+      }
+
+      // Bright red fill — left-aligned rows taper to a point at the right
+      ctx.fillStyle = '#ff2020';
+      for (let row = 0; row < ah; row++) {
+        const dist = Math.abs(row - halfH + 0.5) / halfH;
+        const w    = Math.max(1, Math.round(aw * (1.0 - Math.min(1, dist))));
+        ctx.fillRect(bx, midY - halfH + row, w, 1);
+      }
+
+      // Pixel-art "TARGETS" label centred above the arrow
+      _drawPixelText(ctx, bx + aw / 2, midY - halfH - 16, 'TARGETS', '#ff2020');
+    }
+
+    ctx.restore();
+  }
 }
 
 /* ============================================================
@@ -767,6 +919,47 @@ function _drawPlaceholderEnemy(ctx, x, y, label) {
   ctx.font        = '11px Arial';
   ctx.textAlign   = 'center';
   ctx.fillText(label, x, y - 4);
+}
+
+/* ============================================================
+   PIXEL FONT — fillRect lettering for in-world HUD labels
+   ============================================================
+   3×5 bitmap glyphs, scaled to 2×2 screen-px per dot.
+   Each row is a 3-bit mask: bit 2 = left column, bit 0 = right column.
+   Only characters used in this file are defined; extend as needed.
+   ============================================================ */
+
+function _drawPixelText(ctx, cx, cy, text, color) {
+  const GLYPHS = {
+    'T': [0b111, 0b010, 0b010, 0b010, 0b010],
+    'A': [0b010, 0b101, 0b111, 0b101, 0b101],
+    'R': [0b110, 0b101, 0b110, 0b110, 0b101],
+    'G': [0b011, 0b100, 0b111, 0b101, 0b011],
+    'E': [0b111, 0b100, 0b110, 0b100, 0b111],
+    'S': [0b011, 0b100, 0b010, 0b001, 0b110],
+  };
+
+  const PX     = 2;                            // screen-px per font dot
+  const GAP    = 1;                            // 1-px gap between characters
+  const CHAR_W = 3 * PX + GAP;                // 7 px per glyph (incl. gap)
+  const totalW = text.length * CHAR_W - GAP;  // gap not appended to last char
+
+  let x = Math.round(cx - totalW / 2);
+  ctx.fillStyle = color;
+
+  for (const ch of text) {
+    const rows = GLYPHS[ch];
+    if (!rows) { x += CHAR_W; continue; }
+    for (let row = 0; row < rows.length; row++) {
+      const bits = rows[row];
+      for (let col = 0; col < 3; col++) {
+        if (bits & (1 << (2 - col))) {      // bit 2 = leftmost column
+          ctx.fillRect(x + col * PX, cy + row * PX, PX, PX);
+        }
+      }
+    }
+    x += CHAR_W;
+  }
 }
 
 function _drawHUDButton(ctx, x, y, w, h, label, bgColor, borderColor) {
