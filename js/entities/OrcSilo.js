@@ -182,7 +182,7 @@ class OrcSilo {
   // playerY      : player's current screen-space Y position
   // ================================================================
 
-  update(dt, playerWorldX, playerY) {
+  update(dt, playerWorldX, playerY, cameraX) {
     if (this._dead) return;
 
     this._pulseT += dt;
@@ -201,8 +201,12 @@ class OrcSilo {
       if (Math.abs(m.y - m.originY) > 700) m.active = false;
     });
 
-    // ---- Detection range: 500 horizontal world-space pixels ----
-    const inRange = Math.abs(playerWorldX - this.worldX) <= 500;
+    // ---- Detection: silo enters the visible camera viewport (right edge + 100 px buffer) ----
+    // Triggers as soon as the silo scrolls onto screen rather than at an
+    // arbitrary fixed distance — the sequence now starts while the silo
+    // is still just beyond the right edge, so the hatch is visibly opening
+    // the moment the structure fully enters view.
+    const inRange = this.worldX <= cameraX + 960 + 100;
 
     // ---- Hatch animation ----
     // Closes gradually in idle (at 2 units/s), tracks wind-up progress
@@ -212,8 +216,16 @@ class OrcSilo {
     if (this._state === 'idle') {
       this._hatchOpen = Math.max(0, this._hatchOpen - dt * 2);
     } else if (this._state === 'windup') {
-      const p = Math.min(1.0, this._windupTimer / 2.5);
-      this._hatchOpen = p * p; // quadratic ease-in
+      // 0.8 s pre-open delay: hatch stays sealed while hydraulics pressurise.
+      // After the delay the doors open with a quadratic ease-in over the
+      // remaining 1.7 s, reaching fully open exactly when firing begins at 2.5 s.
+      const PRE_OPEN_DELAY = 0.8;
+      if (this._windupTimer < PRE_OPEN_DELAY) {
+        this._hatchOpen = 0;
+      } else {
+        const p = Math.min(1.0, (this._windupTimer - PRE_OPEN_DELAY) / (2.5 - PRE_OPEN_DELAY));
+        this._hatchOpen = p * p; // quadratic ease-in
+      }
     } else if (this._state === 'firing') {
       this._hatchOpen = 1.0;
     }

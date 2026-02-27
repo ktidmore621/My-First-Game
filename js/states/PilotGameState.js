@@ -124,10 +124,15 @@ class PilotGameState {
       new OrcCannon(3600, _groundY),
     ];
 
-    // ---- OrcSilo — massive missile launch silo ----
-    // One silo placed at world X=3000 on the horizon line.
-    // Visual only — no update/collision logic yet.
-    this._orcSilo = new OrcSilo(3000, _groundY);
+    // ---- OrcSilo — massive missile launch silos ----
+    // Four silos placed at fixed world-X positions, one between each OrcCannon pair.
+    // Updated and rendered each frame via the _orcSilos loop below.
+    this._orcSilos = [
+      new OrcSilo(1800, _groundY),
+      new OrcSilo(2400, _groundY),
+      new OrcSilo(3000, _groundY),
+      new OrcSilo(3600, _groundY),
+    ];
 
     // Register death callback
     this._player.health.onDeath(() => {
@@ -346,6 +351,45 @@ class PilotGameState {
       });
     });
 
+    // ================================================================
+    // ORC SILO — UPDATE & COLLISION DETECTION
+    // ================================================================
+
+    this._orcSilos.forEach(silo => {
+      if (!silo.isAlive()) return;
+
+      // Feed player world/screen position and current cameraX so the
+      // silo can run its viewport-based detection and advance its state machine.
+      silo.update(dt, this._worldX, this._player.y, this._cameraX);
+
+      // ---- Silo missile → player collision ----
+      if (this._player.isAlive()) {
+        const hit = silo.checkMissilesHitPlayer(
+          this._worldX, this._player.y,
+          PLAYER_HIT_W, PLAYER_HIT_H
+        );
+        if (hit) {
+          // A silo missile deals 25 damage — more than a cannon bolt (10)
+          // to reflect its larger warhead.
+          this._player.health.takeDamage(25);
+        }
+      }
+    });
+
+    // ---- Player bolt → OrcSilo collision ----
+    this._projectilePool.forEach(p => {
+      if (!p.active) return;
+      this._orcSilos.forEach(silo => {
+        if (!silo.isAlive()) return;
+        const hb = silo.getStructureHitbox();
+        if (p.worldX > hb.x && p.worldX < hb.x + hb.w &&
+            p.y      > hb.y && p.y      < hb.y + hb.h) {
+          silo.health.takeDamage(1);
+          p.deactivate();
+        }
+      });
+    });
+
     // ---- Button placeholders ----
     if (this._input.wasTappedInRegion(820, 460, 130, 58)) {
       console.log('[Input] Weapon Select tapped — implement weapon cycling here');
@@ -354,14 +398,7 @@ class PilotGameState {
       console.log('[Input] Evade tapped — implement defensive maneuver here');
     }
 
-    // ---- Placeholder: auto game-over at 30 s ----
-    // Remove when real win/lose conditions are in place.
-    if (this._elapsedTime > 30 && !this._gameOverPending) {
-      this._gameOverPending = true;
-      this._gameData.score  = Math.floor(this._elapsedTime * 10);
-      this._gameData.result = 'survived';
-      this._sm.change(new GameOverState(this._sm, this._input, this._gameData));
-    }
+    // Win condition will be added later — triggered when all objectives are destroyed
 
     this._input.clearTaps();
   }
@@ -388,9 +425,9 @@ class PilotGameState {
     // visually in front of the towers.
     this._orcCannons.forEach(cannon => cannon.render(ctx, this._cameraX));
 
-    // OrcSilo — visual only, no update yet; drawn at the same depth layer
-    // as the OrcCannons so the player plane flies in front of it.
-    this._orcSilo.render(ctx, this._cameraX);
+    // OrcSilo instances — drawn at the same depth layer as the OrcCannons
+    // so the player plane flies in front of all ground structures.
+    this._orcSilos.forEach(silo => silo.render(ctx, this._cameraX));
 
     // Aim indicator line from the plane nose (right-stick active only)
     if (this._input.rightStick.active) {
