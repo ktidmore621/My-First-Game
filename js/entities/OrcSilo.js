@@ -311,10 +311,10 @@ class OrcSilo {
           break;
         }
         this._windupTimer += dt;
-        if (this._windupTimer >= 2.5) {
+        if (this._windupTimer >= 3.0) {
           this._fireMissile(playerWorldX, playerY);
           this._state        = 'firing';
-          this._fireCooldown = 2.5;
+          this._fireCooldown = 12.0; // Launch cycle — reduce for higher difficulty levels
         }
         break;
 
@@ -328,7 +328,7 @@ class OrcSilo {
         this._fireCooldown -= dt;
         if (this._fireCooldown <= 0) {
           this._fireMissile(playerWorldX, playerY);
-          this._fireCooldown = 2.5;
+          this._fireCooldown = 12.0;
         }
         break;
 
