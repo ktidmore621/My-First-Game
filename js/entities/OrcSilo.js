@@ -105,6 +105,13 @@ const MISSILE_TURN_RATE = 30;          // degrees per second homing turn rate
 // Tunable per level — increase gradually as difficulty scales
 const MISSILE_TRACKING_DURATION = 4;  // seconds before missile flies ballistic
 
+// Player bolt → missile hitbox (forgiveness — larger than visual for easier interception)
+const MISSILE_SHOOT_HITBOX_W  = 20;  // player projectile vs missile: width
+const MISSILE_SHOOT_HITBOX_H  = 32;  // player projectile vs missile: height
+// Missile → player hitbox (damage — kept tight for fairness)
+const MISSILE_DAMAGE_HITBOX_W = 10;  // missile vs player: width
+const MISSILE_DAMAGE_HITBOX_H = 21;  // missile vs player: height
+
 class OrcSilo {
 
   constructor(worldX, groundY) {
@@ -435,12 +442,12 @@ class OrcSilo {
 
     for (const m of this._missiles) {
       if (!m.active) continue;
-      // Missile AABB: 10×21 px (≈ 80% of visual 14×36), centred on missile pos.
-      // Covers warhead body (sy−13) through mid-fuselage (sy+8) — forgiving hitbox.
-      const mx = m.worldX - 5;
-      const my = m.y      - 13;
-      if (mx < px + hitW && mx + 10 > px &&
-          my < py + hitH && my + 21 > py) {
+      // Missile damage AABB: MISSILE_DAMAGE_HITBOX_W × MISSILE_DAMAGE_HITBOX_H (10×21 px),
+      // centred on missile world position — kept tight for fairness against the player.
+      const mx = m.worldX - MISSILE_DAMAGE_HITBOX_W / 2;
+      const my = m.y      - MISSILE_DAMAGE_HITBOX_H / 2;
+      if (mx < px + hitW && mx + MISSILE_DAMAGE_HITBOX_W > px &&
+          my < py + hitH && my + MISSILE_DAMAGE_HITBOX_H > py) {
         m.active = false; // missile consumed on impact
         return true;
       }
@@ -455,17 +462,18 @@ class OrcSilo {
   //   Each entry has: .active (bool), .worldX (world-space), .y (screen-space),
   //                   .deactivate() method.
   //
-  // Missile hitbox: 10 × 21 px centred on missile world position.
+  // Shoot hitbox: MISSILE_SHOOT_HITBOX_W × MISSILE_SHOOT_HITBOX_H (20×32 px) centred on
+  // missile world position — forgiveness box makes player interception feel fair.
   // 6 hits destroy the missile (mid-air explosion + deactivate).
   // Each hit triggers a 2-frame white flash overlay on the sprite.
   checkProjectilesHitMissiles(projectilePool) {
     this._missiles.forEach(m => {
       if (!m.active) return;
-      // 10 × 21 AABB centred on (m.worldX, m.y)
-      const ml = m.worldX - 5;   // left edge
-      const mr = m.worldX + 5;   // right edge
-      const mt = m.y      - 10;  // top edge
-      const mb = m.y      + 11;  // bottom edge (21 px total)
+      // 20 × 32 forgiveness AABB centred on (m.worldX, m.y)
+      const ml = m.worldX - MISSILE_SHOOT_HITBOX_W / 2;  // left edge
+      const mr = m.worldX + MISSILE_SHOOT_HITBOX_W / 2;  // right edge
+      const mt = m.y      - MISSILE_SHOOT_HITBOX_H / 2;  // top edge
+      const mb = m.y      + MISSILE_SHOOT_HITBOX_H / 2;  // bottom edge
       projectilePool.forEach(p => {
         if (!p.active) return;
         if (p.worldX > ml && p.worldX < mr && p.y > mt && p.y < mb) {
@@ -1410,11 +1418,12 @@ class OrcSilo {
       ctx.fillRect(cx + 2, -33, 1, 1);
 
       // ================================================================
+      // IDLE = gold slow blink, ALERT = red rapid blink — driven by _siloState
       // WARNING BEACON — mounted on the post cap
-      // Gold slow blink in idle; rapid red blink during windup / firing.
       // ================================================================
       const isAlert = (this._state === 'windup' || this._state === 'firing');
-      const blinkHz = isAlert ? 6.0 : 1.2;            // cycles per second
+      // IDLE:  0.625 Hz → 0.8 s on, 0.8 s off   ALERT: 3.333 Hz → 0.15 s on, 0.15 s off
+      const blinkHz = isAlert ? (10 / 3) : 0.625;     // cycles per second
       const phase   = this._lightPhases[i];
       const litFrac = Math.sin(this._pulseT * blinkHz * Math.PI * 2 + phase);
       const lit     = litFrac > 0;
