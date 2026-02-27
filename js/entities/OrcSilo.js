@@ -400,6 +400,16 @@ class OrcSilo {
   render(ctx, cameraX) {
     if (this._dead) return;
 
+    // World-space effects must render even when the silo structure is off-screen.
+    // They are drawn first, before the culling guard, so missiles in flight,
+    // launch smoke, and impact explosions remain visible after the silo scrolls
+    // past the left edge of the camera viewport.
+    this._renderMissiles(ctx, cameraX);
+    // Render active launch smoke puffs in world space
+    this._renderLaunchSmoke(ctx, cameraX);
+    // Render active impact explosions in world space
+    this._renderImpactExplosions(ctx, cameraX);
+
     const screenX = Math.round(this.worldX - cameraX);
     // Cull structures entirely off-screen (structure is 120 px wide, 30 px tall)
     if (screenX < -140 || screenX > 1100) return;
@@ -434,13 +444,6 @@ class OrcSilo {
     this._renderSteamBurst(ctx);
 
     ctx.restore();
-
-    // Missiles render in screen space — after ctx.restore() so they
-    // are not affected by the per-structure translate
-    this._renderMissiles(ctx, cameraX);
-    // Launch smoke and impact explosions are world-space effects rendered after missiles
-    this._renderLaunchSmoke(ctx, cameraX);
-    this._renderImpactExplosions(ctx, cameraX);
   }
 
   // ================================================================
@@ -476,7 +479,8 @@ class OrcSilo {
       const my = m.y      - MISSILE_DAMAGE_HITBOX_H / 2;
       if (mx < px + hitW && mx + MISSILE_DAMAGE_HITBOX_W > px &&
           my < py + hitH && my + MISSILE_DAMAGE_HITBOX_H > py) {
-        this._spawnImpactExplosion(m.worldX, m.y); // impact visual at missile position
+        // Impact explosion — triggered on missile-to-player collision
+        this._spawnImpactExplosion(m.worldX, m.y);
         m.active = false; // missile consumed on impact
         return true;
       }
@@ -694,6 +698,8 @@ class OrcSilo {
   _spawnLaunchSmoke() {
     const ox = this.worldX;            // silo centre (world-space)
     const oy = this._groundY - 28;    // screen-space Y of the silo opening
+
+    console.log('[OrcSilo] Launch smoke spawned at worldX:', ox, '— missile firing');
 
     // 6 puffs — varied sizes (8–16 px), drift (-8…+8 px/s), rise (-18…-32 px/s)
     this._launchSmoke.push(
