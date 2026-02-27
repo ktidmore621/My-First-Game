@@ -113,25 +113,33 @@ class PilotGameState {
     // Pre-build the ground detail array once so we don't allocate each frame.
     this._groundFeatures = _buildGroundFeatures();
 
-    // ---- OrcCannon ground enemies ----
-    // Three Voidheart plasma cannon emplacements placed at fixed world-space X
-    // positions across the battlefield. Each sits on the horizon line (groundY).
-    // See OrcCannon.js for the full wind-up state machine and visual design.
-    const _groundY = Math.round(this._H * 0.72);
-    this._orcCannons = [
-      new OrcCannon(1200, _groundY),
-      new OrcCannon(2400, _groundY),
-      new OrcCannon(3600, _groundY),
-    ];
+    // ---- Enemy placement spacing constants ----
+    const MIN_ENEMY_SPACING = 280; // minimum world-space pixels between any two enemy structures
+    const CANNON_WIDTH      = 80;  // approximate footprint of an OrcCannon
+    const SILO_WIDTH        = 280; // approximate footprint of an OrcSilo including fence perimeter
 
-    // ---- OrcSilo — massive missile launch silos ----
-    // Four silos placed at fixed world-X positions, one between each OrcCannon pair.
-    // Updated and rendered each frame via the _orcSilos loop below.
-    this._orcSilos = [
-      new OrcSilo(1800, _groundY),
-      new OrcSilo(2400, _groundY),
-      new OrcSilo(3000, _groundY),
-      new OrcSilo(3600, _groundY),
+    const _groundY = Math.round(this._H * 0.72);
+
+    // ---- Unified enemy array ----
+    // All ground enemies stored in a single array regardless of type.
+    // Add future enemy types here — update/render loops iterate this._enemies
+    // automatically, so no other code needs to change.
+    //
+    // Placement order: OrcCannon, OrcSilo, OrcCannon, OrcSilo, OrcCannon, OrcSilo, OrcCannon
+    // Formula: each position = previous position + previous width + MIN_ENEMY_SPACING
+    //
+    // Calculated world-X centres:
+    //   Cannon 1 :   600   Silo 1 :   960   Cannon 2 : 1520
+    //   Silo 2   : 1880   Cannon 3 : 2440   Silo 3   : 2800   Cannon 4 : 3360
+    let _ex = 600;
+    this._enemies = [
+      new OrcCannon(_ex,                                       _groundY), //  600
+      new OrcSilo  (_ex += CANNON_WIDTH + MIN_ENEMY_SPACING,   _groundY), //  960
+      new OrcCannon(_ex += SILO_WIDTH   + MIN_ENEMY_SPACING,   _groundY), // 1520
+      new OrcSilo  (_ex += CANNON_WIDTH + MIN_ENEMY_SPACING,   _groundY), // 1880
+      new OrcCannon(_ex += SILO_WIDTH   + MIN_ENEMY_SPACING,   _groundY), // 2440
+      new OrcSilo  (_ex += CANNON_WIDTH + MIN_ENEMY_SPACING,   _groundY), // 2800
+      new OrcCannon(_ex += SILO_WIDTH   + MIN_ENEMY_SPACING,   _groundY), // 3360
     ];
 
     // Register death callback
@@ -282,8 +290,11 @@ class PilotGameState {
     });
 
     // ================================================================
-    // ORC CANNON — UPDATE & COLLISION DETECTION
+    // GROUND ENEMIES — UPDATE & COLLISION DETECTION
     // ================================================================
+    // Single loop over this._enemies covers all ground entity types.
+    // Future enemy types just get pushed into this._enemies — nothing
+    // else needs to change.
 
     // Player hitbox: intentionally ~80% of the visual ship size (64×28 px)
     // so that near-misses feel fair — a bolt clipping the wing tip does not
@@ -295,96 +306,44 @@ class PilotGameState {
     const PLAYER_HIT_W = 50; // ≈ 78% of visual width  (64 px)
     const PLAYER_HIT_H = 22; // ≈ 79% of visual height (28 px)
 
-    this._orcCannons.forEach(cannon => {
-      if (!cannon.isAlive()) return;
+    this._enemies.forEach(enemy => {
+      if (!enemy.isAlive()) return;
 
-      // Feed current player world/screen position so the cannon can run its
-      // detection check and advance the wind-up state machine.
-      cannon.update(dt, this._worldX, this._player.y);
+      // All enemy types receive the same four arguments; OrcCannon ignores
+      // the fourth (cameraX) — extra args are silently dropped by JS.
+      enemy.update(dt, this._worldX, this._player.y, this._cameraX);
 
-      // ---- Enemy bolt → player collision ----
-      // OrcCannon.checkBoltsHitPlayer() tests each of the cannon's active
-      // 6×6 px bolts (world-space X, screen-space Y) against the player
-      // hitbox rectangle. Returns true on the first impact and deactivates
-      // that bolt so it cannot deal damage again.
-      // Only test while the player is alive — prevents a double-death trigger
-      // if two bolts land in the same frame.
       if (this._player.isAlive()) {
-        const hit = cannon.checkBoltsHitPlayer(
-          this._worldX, this._player.y,
-          PLAYER_HIT_W, PLAYER_HIT_H
-        );
-        if (hit) {
-          // One orc plasma bolt deals 10 damage to the player hull.
-          // A Scout (38 HP) goes down in 4 hits; a Bomber (95 HP) takes 10.
-          this._player.health.takeDamage(10);
+        // ---- OrcCannon: plasma bolt → player ----
+        // 10 damage per bolt. Scout (38 HP) down in 4 hits; Bomber (95 HP) in 10.
+        if (typeof enemy.checkBoltsHitPlayer === 'function') {
+          if (enemy.checkBoltsHitPlayer(this._worldX, this._player.y, PLAYER_HIT_W, PLAYER_HIT_H)) {
+            this._player.health.takeDamage(10);
+          }
+        }
+
+        // ---- OrcSilo: homing missile → player ----
+        // 25 damage per missile — heavier warhead than a plasma bolt.
+        if (typeof enemy.checkMissilesHitPlayer === 'function') {
+          if (enemy.checkMissilesHitPlayer(this._worldX, this._player.y, PLAYER_HIT_W, PLAYER_HIT_H)) {
+            this._player.health.takeDamage(25);
+          }
         }
       }
     });
 
-    // ---- Player bolt → OrcCannon collision ----
-    // AABB test: for each active player bolt check whether its centre point
-    // falls inside the cannon's structure bounding box.
-    //
-    // Coordinate spaces:
-    //   hb.x, hb.w  → world-space (same axis as p.worldX)
-    //   hb.y, hb.h  → screen-space (same axis as p.y)
-    //
-    // Rectangle overlap rule (axis-aligned):
-    //   Horizontal: p.worldX > hb.x  AND  p.worldX < hb.x + hb.w
-    //   Vertical  : p.y      > hb.y  AND  p.y      < hb.y + hb.h
-    //
-    // On hit: deal 1 damage to the cannon and deactivate the bolt so it
-    // cannot pass through and hit again in the same frame.
-    // The cannon's HealthSystem fires the progressive-damage callbacks
-    // (crack, tilt, collapse) automatically — no extra handling needed here.
+    // ---- Player bolt → any ground enemy (AABB, unified) ----
+    // getStructureHitbox() is defined on all ground entity types.
+    // Coordinate spaces: hb.x/w → world-space; hb.y/h → screen-space.
+    // 1 damage per bolt; bolt consumed on contact.
     this._projectilePool.forEach(p => {
       if (!p.active) return;
-      this._orcCannons.forEach(cannon => {
-        if (!cannon.isAlive()) return;
-        const hb = cannon.getStructureHitbox();
+      this._enemies.forEach(enemy => {
+        if (!enemy.isAlive()) return;
+        const hb = enemy.getStructureHitbox();
         if (p.worldX > hb.x && p.worldX < hb.x + hb.w &&
             p.y      > hb.y && p.y      < hb.y + hb.h) {
-          cannon.health.takeDamage(1); // 1 damage per bolt — 3 direct hits to destroy
-          p.deactivate();              // bolt consumed on contact
-        }
-      });
-    });
-
-    // ================================================================
-    // ORC SILO — UPDATE & COLLISION DETECTION
-    // ================================================================
-
-    this._orcSilos.forEach(silo => {
-      if (!silo.isAlive()) return;
-
-      // Feed player world/screen position and current cameraX so the
-      // silo can run its viewport-based detection and advance its state machine.
-      silo.update(dt, this._worldX, this._player.y, this._cameraX);
-
-      // ---- Silo missile → player collision ----
-      if (this._player.isAlive()) {
-        const hit = silo.checkMissilesHitPlayer(
-          this._worldX, this._player.y,
-          PLAYER_HIT_W, PLAYER_HIT_H
-        );
-        if (hit) {
-          // A silo missile deals 25 damage — more than a cannon bolt (10)
-          // to reflect its larger warhead.
-          this._player.health.takeDamage(25);
-        }
-      }
-    });
-
-    // ---- Player bolt → OrcSilo collision ----
-    this._projectilePool.forEach(p => {
-      if (!p.active) return;
-      this._orcSilos.forEach(silo => {
-        if (!silo.isAlive()) return;
-        const hb = silo.getStructureHitbox();
-        if (p.worldX > hb.x && p.worldX < hb.x + hb.w &&
-            p.y      > hb.y && p.y      < hb.y + hb.h) {
-          silo.health.takeDamage(1);
+          enemy.health.takeDamage(1);
           p.deactivate();
         }
       });
@@ -420,14 +379,10 @@ class PilotGameState {
     // battlefield boundary — signals the hard wall before they hit it
     this._drawBoundaryIndicator(ctx, W, H);
 
-    // OrcCannon ground enemies — each handles its own screen-cull and render.
-    // Drawn after the ground and before the player ship so the plane flies
-    // visually in front of the towers.
-    this._orcCannons.forEach(cannon => cannon.render(ctx, this._cameraX));
-
-    // OrcSilo instances — drawn at the same depth layer as the OrcCannons
-    // so the player plane flies in front of all ground structures.
-    this._orcSilos.forEach(silo => silo.render(ctx, this._cameraX));
+    // All ground enemies — drawn after the ground and before the player ship
+    // so the plane flies visually in front of all structures.
+    // Each entity handles its own screen-cull and render.
+    this._enemies.forEach(enemy => enemy.render(ctx, this._cameraX));
 
     // Aim indicator line from the plane nose (right-stick active only)
     if (this._input.rightStick.active) {
