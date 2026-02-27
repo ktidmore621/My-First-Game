@@ -3,28 +3,62 @@
    ============================================================
    The main gameplay screen for PILOT MODE.
 
-   Left stick = movement. Right stick = weapon aim direction.
+   Left stick = movement (all directions). Right stick = weapon aim.
    HUD shows health bar, mode label, and elapsed time.
 
-   BACKGROUND SYSTEM:
-     The sky is drawn as flat horizontal colour bands (no gradients).
-     The ground is a single tiled layer that scrolls right-to-left,
-     giving the feeling of flying forward over enemy territory.
-     Scroll speed is derived from the plane's Speed stat so faster
-     planes feel faster. See _drawSky() and _drawGround() below.
+   ----------------------------------------------------------------
+   CAMERA & WORLD OFFSET SYSTEM
+   ----------------------------------------------------------------
+   The battlefield is a wide fixed arena — 5× the canvas width
+   (4800px). The player has a world-space position (_worldX) that
+   tracks where they are inside that arena.
+
+   Each frame, the CAMERA OFFSET (_cameraX) is computed so the
+   player stays horizontally centred on screen:
+
+       _cameraX = clamp(_worldX − W/2,  0,  BATTLEFIELD_W − W)
+
+   The player's SCREEN X is then derived from the two world values:
+
+       player.x = _worldX − _cameraX
+
+   While the player is away from both battlefield edges, _cameraX
+   tracks _worldX exactly and player.x stays at W/2 (≈ 480) — the
+   world moves, the ship holds still. Near either edge, the camera
+   clamp kicks in; the player drifts toward the edge of the screen,
+   making the boundary feel solid. A darkening vignette reinforces
+   the wall (see _drawBoundaryIndicator).
+
+   The ground and all world objects are drawn using _cameraX as
+   their scroll offset:
+     - Moving right  → _worldX grows → _cameraX grows → ground
+       shifts left.
+     - Moving left   → _cameraX shrinks → ground shifts right.
+     - Holding still → _cameraX constant → world holds still.
+
+   Vertical movement (up/down) is screen-space only — the camera
+   does not pan vertically.
+
+   ----------------------------------------------------------------
+   BACKGROUND SYSTEM
+   ----------------------------------------------------------------
+   The sky is flat horizontal colour bands — it never scrolls.
+   The ground is a single tiled layer (960px wide) drawn at an
+   offset of (_cameraX % TILE_W), creating seamless looping that
+   responds to actual player movement rather than a fixed clock.
 
    VISUAL STYLE (see Visual Style Guide in CLAUDE.md):
-     - ctx.imageSmoothingEnabled = false set at the top of render()
+     - ctx.imageSmoothingEnabled = false at the top of render()
      - Sky: four flat colour bands, no createLinearGradient
      - Ground base: three flat colour bands, no createLinearGradient
      - Ground features: fillRect only — no ellipse() or arc()
 
    WHAT TO BUILD NEXT:
      - Parallax mid-ground and far-hill layers for depth
-     - Enemy objects with world-space positions that scroll with the ground
-     - Bullet/projectile firing
-     - Collision detection
-     - Mission completion condition
+     - Enemy objects with world-space positions that scroll with ground
+     - Bullet / projectile firing from the aim direction
+     - Collision detection (AABB)
+     - Real mission objectives replacing the 30-second placeholder
    ============================================================ */
 
 class PilotGameState {
@@ -38,7 +72,7 @@ class PilotGameState {
     this._player = gameData.selectedPlane || new Plane({
       id: 'default', name: 'Fighter',
       speed: 70, durability: 80, weaponSize: 60, maneuverability: 70,
-      x: 100, y: 270,
+      x: 480, y: 270,
     });
 
     // Aim angle in radians (0 = pointing right)
@@ -50,23 +84,44 @@ class PilotGameState {
     this._W = 960;
     this._H = 540;
 
-    // ---- Ground scrolling setup ----
-    // The tile width matches the canvas width so exactly one tile fills the screen.
-    // We always draw two tiles side-by-side and shift them left each frame,
-    // creating seamless looping. See _drawGround() for details.
+    // ================================================================
+    // CAMERA & WORLD OFFSET SYSTEM
+    // ================================================================
+
+    // Total width of the playable battlefield in world-space pixels.
+    // 5× the canvas width gives a wide arena without being infinite.
+    this._BATTLEFIELD_W = this._W * 5; // 4800 px
+
+    // _worldX: player's current X position in world space (pixels).
+    //   Range: [player.width/2 … BATTLEFIELD_W − player.width/2]
+    //   Starts at W/2 so the player appears screen-centred at game start
+    //   with the left edge of the battlefield visible.
+    this._worldX = this._W / 2; // 480 px
+
+    // _cameraX: world-space X of the screen's left edge (pixels).
+    //   Computed every frame in update(). Range: [0 … BATTLEFIELD_W − W].
+    //   While the player is mid-field, this equals _worldX − W/2.
+    //   Near the left/right battlefield edge it clamps so we never
+    //   render outside the arena.
+    this._cameraX = 0;
+
+    // ---- Ground tile setup ----
+    // Tile width = canvas width. Two tiles drawn side-by-side, shifted by
+    // (_cameraX % TILE_W), create seamless looping. See _drawGround().
     this._TILE_W = 960;
 
-    // Accumulated scroll distance in pixels (grows without bound; we use % when drawing)
-    this._groundOffset = 0;
-
-    // Scroll speed in pixels/second, driven by the plane's Speed stat:
-    //   speed =   0  →  55 px/s  (slowest, barely creeping)
-    //   speed =  50  → 138 px/s  (moderate)
-    //   speed = 100  → 220 px/s  (feels fast)
-    this._scrollSpeed = 55 + (this._player.speed / 100) * 165;
-
-    // Pre-build the ground detail array once so we don't allocate each frame
+    // Pre-build the ground detail array once so we don't allocate each frame.
     this._groundFeatures = _buildGroundFeatures();
+
+    // ---- Placeholder enemy world positions ----
+    // Markers placed at fixed world-space X coordinates across the battlefield.
+    // Each is drawn at (worldX − _cameraX) so it scrolls with the ground.
+    // Replace with real entity classes when enemy logic is implemented.
+    this._enemyPlaceholders = [
+      { worldX: 1200, screenY: this._H * 0.72 - 18, label: '▲ AA Gun'  },
+      { worldX: 2400, screenY: this._H * 0.72 - 18, label: '▲ Missile' },
+      { worldX: 3600, screenY: this._H * 0.72 - 22, label: '▲ Base'    },
+    ];
 
     // Register death callback
     this._player.health.onDeath(() => {
@@ -83,7 +138,8 @@ class PilotGameState {
 
   enter() {
     console.log('[State] Pilot Mode — plane:', this._player.name,
-      '| ground scroll:', Math.round(this._scrollSpeed), 'px/s');
+      '| battlefield:', this._BATTLEFIELD_W, 'px wide',
+      '| starting worldX:', Math.round(this._worldX));
   }
 
   exit() {}
@@ -95,36 +151,63 @@ class PilotGameState {
   update(dt) {
     this._elapsedTime += dt;
 
-    // Advance the ground scroll by this frame's time slice.
-    // Not calling this line is how a pause screen would freeze the background.
-    this._groundOffset += this._scrollSpeed * dt;
-
-    // --- Player movement ---
-    const maxSpeed = (this._player.speed           / 100) * 220;
-    const turnRate = (this._player.maneuverability  / 100) * 10 + 4;
+    // ---- Player movement ----
+    // velocityX moves the player through WORLD space (drives _worldX).
+    // velocityY moves the player through SCREEN space (drives player.y).
+    // Both are driven by the left thumbstick.
+    const maxSpeed = (this._player.speed          / 100) * 220;
+    const turnRate = (this._player.maneuverability / 100) * 10 + 4;
 
     if (this._input.leftStick.active) {
+      // Smooth velocity toward the stick target using turnRate as a lerp speed
       this._player.velocityX += (this._input.leftStick.x * maxSpeed - this._player.velocityX) * turnRate * dt;
       this._player.velocityY += (this._input.leftStick.y * maxSpeed - this._player.velocityY) * turnRate * dt;
 
+      // Rotate the plane to face its direction of travel when moving fast enough
       const spd = Math.hypot(this._player.velocityX, this._player.velocityY);
       if (spd > 15) {
         this._player.angle = Math.atan2(this._player.velocityY, this._player.velocityX);
       }
     } else {
+      // Decelerate naturally when no stick input
       this._player.velocityX *= 0.88;
       this._player.velocityY *= 0.88;
     }
 
-    this._player.x += this._player.velocityX * dt;
-    this._player.y += this._player.velocityY * dt;
+    // ---- Horizontal: advance the player through world space ----
+    // _worldX is the authoritative position. The screen X is derived
+    // later from _worldX and _cameraX — the player never flies to the
+    // edge of the canvas under normal conditions.
+    this._worldX += this._player.velocityX * dt;
 
+    // Hard boundary: clamp to the battlefield edges so the player cannot
+    // fly off the left or right end of the arena.
     const hw = this._player.width  / 2;
+    this._worldX = Math.max(hw, Math.min(this._BATTLEFIELD_W - hw, this._worldX));
+
+    // ---- Vertical: move the player within screen space ----
+    // The camera does not pan vertically, so player.y is screen-space only.
+    this._player.y += this._player.velocityY * dt;
     const hh = this._player.height / 2;
-    this._player.x = Math.max(hw,      Math.min(this._W - hw,      this._player.x));
     this._player.y = Math.max(hh + 30, Math.min(this._H - hh - 30, this._player.y));
 
-    // --- Aim ---
+    // ---- Update camera offset ----
+    // The camera tries to keep the player at the horizontal mid-point of the
+    // screen. It is clamped so it never shows area outside the battlefield:
+    //   Left clamp  (_cameraX >= 0):              don't reveal left of arena
+    //   Right clamp (_cameraX <= BATTLEFIELD_W−W): don't reveal right of arena
+    this._cameraX = Math.max(
+      0,
+      Math.min(this._BATTLEFIELD_W - this._W, this._worldX - this._W / 2)
+    );
+
+    // Derive the player's SCREEN X from world position and camera offset.
+    // In the middle of the battlefield this equals W/2 (480px) — centred.
+    // Near a battlefield edge the camera clamps and the player drifts
+    // toward the screen edge, making the wall feel solid.
+    this._player.x = this._worldX - this._cameraX;
+
+    // ---- Aim ----
     if (this._input.rightStick.active) {
       const rx = this._input.rightStick.x;
       const ry = this._input.rightStick.y;
@@ -133,7 +216,7 @@ class PilotGameState {
       }
     }
 
-    // --- Button placeholders ---
+    // ---- Button placeholders ----
     if (this._input.wasTappedInRegion(820, 460, 130, 58)) {
       console.log('[Input] Weapon Select tapped — implement weapon cycling here');
     }
@@ -141,7 +224,7 @@ class PilotGameState {
       console.log('[Input] Evade tapped — implement defensive maneuver here');
     }
 
-    // --- Placeholder: auto game-over at 30 s ---
+    // ---- Placeholder: auto game-over at 30 s ----
     // Remove when real win/lose conditions are in place.
     if (this._elapsedTime > 30 && !this._gameOverPending) {
       this._gameOverPending = true;
@@ -166,12 +249,20 @@ class PilotGameState {
     this._drawSky(ctx, W, H);
     this._drawGround(ctx, W, H);
 
-    // Placeholder enemy markers (static screen-space for now; will scroll with ground later)
-    _drawPlaceholderEnemy(ctx, 400, H * 0.72 - 18, '▲ AA Gun');
-    _drawPlaceholderEnemy(ctx, 620, H * 0.72 - 18, '▲ Missile');
-    _drawPlaceholderEnemy(ctx, 820, H * 0.72 - 22, '▲ Base');
+    // Subtle darkening at the screen edge when the player is near a
+    // battlefield boundary — signals the hard wall before they hit it
+    this._drawBoundaryIndicator(ctx, W, H);
 
-    // Aim indicator line from the plane nose
+    // Placeholder enemy markers at their world-space positions.
+    // screenX = worldX − _cameraX. Skip markers that are off-screen.
+    this._enemyPlaceholders.forEach(e => {
+      const screenX = e.worldX - this._cameraX;
+      if (screenX > -40 && screenX < W + 40) {
+        _drawPlaceholderEnemy(ctx, screenX, e.screenY, e.label);
+      }
+    });
+
+    // Aim indicator line from the plane nose (right-stick active only)
     if (this._input.rightStick.active) {
       ctx.save();
       ctx.translate(this._player.x, this._player.y);
@@ -196,12 +287,41 @@ class PilotGameState {
   }
 
   // ==========================================================
+  // BOUNDARY INDICATOR
+  // ==========================================================
+
+  // Draws a dark vignette strip at the left or right screen edge when the
+  // player approaches a battlefield boundary. The overlay fades in over the
+  // last FADE_DIST world-pixels before the wall, reaching max alpha (0.5)
+  // exactly at the hard boundary clamp.
+  _drawBoundaryIndicator(ctx, W, H) {
+    const FADE_DIST  = 300; // world-px from boundary where fade begins
+    const VIGNETTE_W = 120; // screen-px width of the darkened edge strip
+
+    // How far the player's hull edge is from each battlefield boundary
+    const distLeft  = this._worldX - (this._player.width / 2);
+    const distRight = (this._BATTLEFIELD_W - this._player.width / 2) - this._worldX;
+
+    if (distLeft < FADE_DIST) {
+      const alpha = (1 - distLeft / FADE_DIST) * 0.5;
+      ctx.fillStyle = `rgba(0, 0, 0, ${alpha.toFixed(3)})`;
+      ctx.fillRect(0, 0, VIGNETTE_W, H);
+    }
+
+    if (distRight < FADE_DIST) {
+      const alpha = (1 - distRight / FADE_DIST) * 0.5;
+      ctx.fillStyle = `rgba(0, 0, 0, ${alpha.toFixed(3)})`;
+      ctx.fillRect(W - VIGNETTE_W, 0, VIGNETTE_W, H);
+    }
+  }
+
+  // ==========================================================
   // BACKGROUND: SKY (static)
   // ==========================================================
 
   // The sky is a fixed set of flat colour bands — it never scrolls.
   // Hard-edged horizontal strips step from deep navy at the top down to
-  // a hazy blue near the horizon.  No gradients (Visual Style Guide rule 1).
+  // a hazy blue near the horizon. No gradients (Visual Style Guide rule 1).
   _drawSky(ctx, W, H) {
     const horizonY = Math.floor(H * 0.72);
 
@@ -234,21 +354,23 @@ class PilotGameState {
   }
 
   // ==========================================================
-  // BACKGROUND: GROUND (scrolling)
+  // BACKGROUND: GROUND (camera-driven scrolling)
   // ==========================================================
 
-  // The ground scrolls right-to-left by tiling a 960px-wide pattern.
+  // The ground tiles scroll in response to _cameraX — the world-space X
+  // of the screen's left edge. This means the ground holds perfectly still
+  // when the player holds still, and moves at exactly the player's speed
+  // when flying left or right.
   //
-  // HOW SEAMLESS TILING WORKS:
-  //   Each frame, _groundOffset grows by (scrollSpeed * dt) pixels.
-  //   We compute  shift = _groundOffset % TILE_W  (always 0–959).
-  //   Then we draw tiles starting at x = -shift, stepping by TILE_W:
-  //     tile at x = -shift          (partially off-screen left)
-  //     tile at x = -shift + 960    (fills the right remainder)
-  //   Together they always cover the full 960px canvas.
-  //   When shift wraps from 959 back to 0, both tiles are in the same
-  //   relative positions — the seam is invisible because the tile
-  //   content at its left edge matches its right edge.
+  // HOW CAMERA-DRIVEN TILING WORKS:
+  //   _cameraX represents how many world-pixels we've scrolled from the
+  //   left edge of the battlefield. We take shift = _cameraX % TILE_W
+  //   (always 0–959) and draw tiles starting at x = -shift:
+  //     tile at x = -shift          (left tile, partially off-screen left)
+  //     tile at x = -shift + 960    (right tile, fills the remainder)
+  //   Together they cover the full 960px canvas every frame.
+  //   As _cameraX grows (moving right) shift grows, tiles march leftward.
+  //   When _cameraX stops changing the tiles lock in place.
   _drawGround(ctx, W, H) {
     const horizonY = H * 0.72;
     const groundH  = H - horizonY;
@@ -267,8 +389,10 @@ class PilotGameState {
     ctx.fillStyle = '#5e4a28';
     ctx.fillRect(0, Math.floor(horizonY), W, 2);
 
-    // Draw scrolling detail tiles
-    const shift = this._groundOffset % this._TILE_W;
+    // Scroll ground detail tiles using _cameraX as the source.
+    // _cameraX is the world-left edge of the screen; modding by TILE_W
+    // gives the sub-tile pixel offset to shift the repeating pattern.
+    const shift = this._cameraX % this._TILE_W;
     for (let tileX = -shift; tileX < W; tileX += this._TILE_W) {
       this._drawGroundTile(ctx, tileX, horizonY, groundH);
     }
