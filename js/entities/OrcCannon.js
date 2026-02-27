@@ -723,24 +723,88 @@ class OrcCannon {
     ctx.fillStyle = '#382a1a';
     ctx.fillRect( -5 + cx, -147, 11, 21);
 
-    // Darker bore pixel at tip (Visual Style Guide rule 4)
-    ctx.fillStyle = '#0e0a06';
-    ctx.fillRect( -2 + cx, -149, 4, 4);
+    // ---- Cooling vents along barrel left side ----
+    // Five 1px dark slots; a bright highlight pixel sits above each
+    ctx.fillStyle = '#1a1208';
+    ctx.fillRect(-5 + cx, -143, 1, 1);
+    ctx.fillRect(-5 + cx, -139, 1, 1);
+    ctx.fillRect(-5 + cx, -135, 1, 1);
+    ctx.fillRect(-5 + cx, -131, 1, 1);
+    ctx.fillRect(-5 + cx, -127, 1, 1);
+    ctx.fillStyle = '#6a5840';              // bright highlight above each slot
+    ctx.fillRect(-5 + cx, -144, 1, 1);
+    ctx.fillRect(-5 + cx, -140, 1, 1);
+    ctx.fillRect(-5 + cx, -136, 1, 1);
+    ctx.fillRect(-5 + cx, -132, 1, 1);
+    ctx.fillRect(-5 + cx, -128, 1, 1);
+
+    // ---- Barrel bore at tip — 2px dark outer ring, 1px bright center ----
+    ctx.fillStyle = '#0a0806';              // very dark outer ring (2px border)
+    ctx.fillRect(-2 + cx, -149, 4, 4);
+    ctx.fillStyle = '#2a2018';              // medium dark inner area
+    ctx.fillRect(-1 + cx, -148, 2, 2);
+    ctx.fillStyle = '#585040';              // faint glint at bore centre
+    ctx.fillRect(  0 + cx, -148, 1, 1);
+
+    // ---- Weld lines where barrel meets mounting ----
+    // Alternating bright/lighter 1px pixels suggest fresh tack welds
+    ctx.fillStyle = '#c8b080';
+    ctx.fillRect(-4 + cx, -126, 1, 1);
+    ctx.fillRect(-2 + cx, -126, 1, 1);
+    ctx.fillRect( 0 + cx, -126, 1, 1);
+    ctx.fillRect( 2 + cx, -126, 1, 1);
+    ctx.fillRect( 4 + cx, -126, 1, 1);
+    ctx.fillStyle = '#e0c890';              // brighter accent welds between above
+    ctx.fillRect(-3 + cx, -126, 1, 1);
+    ctx.fillRect( 1 + cx, -126, 1, 1);
+    ctx.fillRect( 3 + cx, -126, 1, 1);
+
+    // ---- Orc glyph / scratch marks on barrel right side ----
+    // A few 1px angular lines — the crew has marked their weapon
+    ctx.fillStyle = '#6a5840';
+    ctx.fillRect( 3 + cx, -142, 1, 5);     // vertical stroke
+    ctx.fillRect( 2 + cx, -142, 2, 1);     // top horizontal tick
+    ctx.fillRect( 2 + cx, -139, 2, 1);     // mid horizontal tick
+    ctx.fillRect( 3 + cx, -136, 2, 1);     // angled bottom stroke (offset right)
+
+    // ---- Ammunition feed — makeshift angled pipe on the left side ----
+    // Three fillRect pieces suggest a crude reload mechanism bolted on
+    ctx.fillStyle = '#4a3a2a';
+    ctx.fillRect(-9 + cx, -120, 5, 3);     // stub connecting to cannon body
+    ctx.fillStyle = '#3a2a1a';
+    ctx.fillRect(-12 + cx, -118, 4, 2);    // angled elbow going down-left
+    ctx.fillRect(-14 + cx, -116, 3, 2);    // further down-left segment
+    ctx.fillStyle = '#2a1a0e';
+    ctx.fillRect(-14 + cx, -115, 2, 3);    // pipe end cap
+    ctx.fillStyle = '#6a5840';
+    ctx.fillRect(-9 + cx, -120, 5, 1);     // top-face highlight (tube illusion)
 
     // Crank handle — L-shaped pair of rectangles on the right side
     ctx.fillStyle = '#5a4a3a';
     ctx.fillRect(  5 + cx, -133,  9, 4); // horizontal arm of L
     ctx.fillRect( 12 + cx, -137,  4, 9); // vertical grip of L
 
+    // ---- Crank grip texture — alternating 2px dark and lighter wrap bands ----
+    ctx.fillStyle = '#3a2a1a';              // dark grip band
+    ctx.fillRect( 12 + cx, -137, 4, 2);
+    ctx.fillRect( 12 + cx, -133, 4, 2);
+    ctx.fillRect( 12 + cx, -129, 4, 1);    // final partial band
+    ctx.fillStyle = '#6a5848';              // lighter grip band
+    ctx.fillRect( 12 + cx, -135, 4, 2);
+    ctx.fillRect( 12 + cx, -131, 4, 2);
+
     // ----------------------------------------------------------------
-    // VOIDHEART ORE POWER CELL — 8×8 px mounted on right side of cannon.
+    // VOIDHEART ORE POWER CELL — 10×10 px mounted on right side of cannon.
+    // Layout: 2px dark border surrounding a 6×6 bright inner core.
     //
-    // Color scheme by state:
-    //   idle/firing : dim-to-bright purplish-red (same formula as before)
-    //   windup      : EXTREME contrast — deep maroon (#3c0028) to
-    //                 bright white-pink (#ffe8ff) — impossible to miss
+    // Color scheme:
+    //   idle    : dim dark purplish-red — barely alive
+    //   firing  : bright pulsing purplish-red/pink — active danger
+    //   windup  : high-contrast deep maroon → white-pink flashes
     //
-    // A 2×2 px outer ring pulses outward during windup in matching colors.
+    // Wind-up: three concentric 1px rings expand outward in progressively
+    // brighter pink, alpha driven by glow. White flash for 2 frames at
+    // the instant just before the first shot fires.
     // ----------------------------------------------------------------
     let pr, pg, pb;
     if (this._state === 'windup') {
@@ -756,24 +820,64 @@ class OrcCannon {
     }
     const cellColor = `rgb(${pr},${pg},${pb})`;
 
-    // Outer ring — 2 px wide border around the 8×8 cell, windup only.
-    // Draw the ring as a slightly larger filled rect; the cell will cover
-    // the center, leaving only the 2 px border visible.
+    // ---- Three-ring windup pulse ----
+    // Concentric 1px rings drawn outside the cell; outermost is brightest.
+    // Cell occupies (5+cx, -124, 10, 10). Ring offsets are 1/2/3 px out.
     if (this._state === 'windup') {
-      ctx.fillStyle = cellColor;
-      ctx.fillRect( 3 + cx, -125, 12, 12); // 12×12 at (3,−125) = 2px margin
+      // Ring 1 — 1px outside cell, dim purplish-pink
+      ctx.globalAlpha = glow;
+      ctx.fillStyle = '#8830a0';
+      ctx.fillRect( 4 + cx, -125, 12,  1); // top
+      ctx.fillRect( 4 + cx, -114, 12,  1); // bottom
+      ctx.fillRect( 4 + cx, -124,  1, 10); // left
+      ctx.fillRect(15 + cx, -124,  1, 10); // right
+      // Ring 2 — 2px outside cell, medium pink
+      ctx.globalAlpha = glow * 0.9;
+      ctx.fillStyle = '#c82890';
+      ctx.fillRect( 3 + cx, -126, 14,  1); // top
+      ctx.fillRect( 3 + cx, -113, 14,  1); // bottom
+      ctx.fillRect( 3 + cx, -125,  1, 12); // left
+      ctx.fillRect(16 + cx, -125,  1, 12); // right
+      // Ring 3 — 3px outside cell, brightest pink
+      ctx.globalAlpha = glow * 0.8;
+      ctx.fillStyle = '#ff60c0';
+      ctx.fillRect( 2 + cx, -127, 16,  1); // top
+      ctx.fillRect( 2 + cx, -112, 16,  1); // bottom
+      ctx.fillRect( 2 + cx, -126,  1, 14); // left
+      ctx.fillRect(17 + cx, -126,  1, 14); // right
+      ctx.globalAlpha = 1.0;
     }
 
-    // Power cell body (8×8)
-    ctx.fillStyle = cellColor;
-    ctx.fillRect( 5 + cx, -123, 8, 8);
+    // Cell 2px dark border background
+    ctx.fillStyle = '#1a0820';
+    ctx.fillRect( 5 + cx, -124, 10, 10);
 
-    // Bright center highlight — fades in from glow=0.5 to glow=1.0
+    // Inner 6×6 bright core — carries the glow colour
+    ctx.fillStyle = cellColor;
+    ctx.fillRect( 7 + cx, -122, 6, 6);
+
+    // ---- Circuit line details — 1px L-shaped traces from two corners ----
+    ctx.fillStyle = '#9040b0';
+    // Top-right corner: horizontal right then vertical up
+    ctx.fillRect(15 + cx, -124, 2, 1);
+    ctx.fillRect(16 + cx, -127, 1, 4);
+    // Bottom-left corner: horizontal left then vertical down
+    ctx.fillRect( 3 + cx, -115, 2, 1);
+    ctx.fillRect( 3 + cx, -115, 1, 3);
+
+    // Bright core sparkle — fades in from glow=0.5 to glow=1.0
     if (glow > 0.5) {
       ctx.globalAlpha = (glow - 0.5) * 2.0;
       ctx.fillStyle   = '#ffccff';
-      ctx.fillRect( 7 + cx, -121, 4, 4); // 4×4 centered in the 8×8 cell
+      ctx.fillRect( 8 + cx, -121, 4, 4); // bright spot centred in 6×6 core
       ctx.globalAlpha = 1.0;
+    }
+
+    // ---- Two-frame white flash just before windup completes ----
+    // The power cell flares white at ≈0.717 s, signalling imminent fire
+    if (this._state === 'windup' && this._windupTimer >= 0.75 - (2 / 60)) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect( 5 + cx, -124, 10, 10);
     }
   }
 
