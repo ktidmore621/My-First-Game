@@ -134,6 +134,31 @@ class PilotGameState {
         }, 800);
       }
     });
+
+    // ================================================================
+    // PX-9 RAPID PLASMA ARRAY — PROJECTILE POOL
+    // ================================================================
+    // Pre-allocate 30 Projectile slots once and reuse them throughout
+    // the game session. No new objects are created during gameplay.
+    // See Projectile.js for the full pooling design rationale.
+    this._projectilePool = [];
+    for (let i = 0; i < 30; i++) {
+      this._projectilePool.push(new Projectile());
+    }
+
+    // Fire interval in seconds: 8 shots/sec = 0.125 s between shots.
+    // A named constant makes tuning easy — one number to change.
+    this._FIRE_INTERVAL = 1 / 8;
+
+    // Counts down from _FIRE_INTERVAL to 0. When it reaches 0 the next
+    // right-stick push fires a shot. Initialised to 0 so the very first
+    // stick push fires immediately without waiting a full interval.
+    this._fireCooldown = 0;
+
+    // Muzzle flash timer: non-zero while the firing flash should be drawn.
+    // Duration = 2 frames at 60 fps (≈ 33 ms) — a brief bright flicker.
+    this._MUZZLE_FLASH_DURATION = 2 / 60;
+    this._muzzleFlashTimer      = 0;
   }
 
   enter() {
@@ -216,6 +241,35 @@ class PilotGameState {
       }
     }
 
+    // ---- PX-9 Rapid Plasma Array: firing ----
+    // Advance both the fire-rate cooldown and the muzzle-flash timer each frame.
+    this._fireCooldown     = Math.max(0, this._fireCooldown     - dt);
+    this._muzzleFlashTimer = Math.max(0, this._muzzleFlashTimer - dt);
+
+    // Fire automatically while the right stick is pushed past the aim deadzone
+    // and the cooldown has elapsed — produces ~8 shots per second.
+    if (this._input.rightStick.active) {
+      const rx = this._input.rightStick.x;
+      const ry = this._input.rightStick.y;
+      if (Math.hypot(rx, ry) > 0.1 && this._fireCooldown <= 0) {
+        this._fireProjectile();
+        this._fireCooldown = this._FIRE_INTERVAL;
+      }
+    }
+
+    // ---- Update projectile pool ----
+    // Move each active projectile forward and recycle any that have left
+    // the visible area. Bounds: off-screen horizontally (with 60px margin),
+    // or more than one full screen height above or below the ship.
+    this._projectilePool.forEach(p => {
+      if (!p.active) return;
+      p.update(dt);
+      const screenX  = p.worldX - this._cameraX;
+      const offSideX = screenX < -60 || screenX > this._W + 60;
+      const offSideY = Math.abs(p.y - this._player.y) > this._H;
+      if (offSideX || offSideY) p.deactivate();
+    });
+
     // ---- Button placeholders ----
     if (this._input.wasTappedInRegion(820, 460, 130, 58)) {
       console.log('[Input] Weapon Select tapped — implement weapon cycling here');
@@ -279,6 +333,8 @@ class PilotGameState {
     }
 
     this._player.render(ctx);
+    this._renderProjectiles(ctx);    // plasma bolts drawn in front of the ship
+    this._renderMuzzleFlash(ctx);    // brief firing flash on top of world-space objects
     this._renderHUD(ctx);
     this._input.renderSticks(ctx);
 
@@ -432,6 +488,90 @@ class PilotGameState {
     ctx.font      = '14px Arial';
     ctx.textAlign = 'right';
     ctx.fillText('T+' + Math.floor(this._elapsedTime) + 's', W - 12, 24);
+  }
+
+  // ================================================================
+  // PX-9 RAPID PLASMA ARRAY — FIRING
+  // ================================================================
+
+  // Acquire the first inactive slot from the pool, configure it, and
+  // mark it active. If all 30 slots are in flight the shot is dropped
+  // silently — frame rate stays smooth and no new objects are allocated.
+  _fireProjectile() {
+    // Linear scan is negligible overhead at a pool size of 30
+    let proj = null;
+    for (let i = 0; i < this._projectilePool.length; i++) {
+      if (!this._projectilePool[i].active) {
+        proj = this._projectilePool[i];
+        break;
+      }
+    }
+    if (!proj) return; // pool exhausted — shot dropped this frame
+
+    const SPEED  = 600; // px/s in the aim direction
+
+    // Damage scales lightly with the plane's weaponSize stat (range 10–20)
+    const DAMAGE = 10 + Math.round(this._player.weaponSize / 10);
+
+    // Nose position in world/screen space.
+    // The bolt spawns at the tip of the ship along the aim direction —
+    // offset is half the plane's width from the plane's centre point.
+    const noseOffsetX = Math.cos(this._aimAngle) * (this._player.width  / 2);
+    const noseOffsetY = Math.sin(this._aimAngle) * (this._player.width  / 2);
+
+    proj.fire(
+      this._worldX   + noseOffsetX,         // world-space X origin
+      this._player.y + noseOffsetY,         // screen-space Y origin
+      Math.cos(this._aimAngle) * SPEED,     // world-space X velocity
+      Math.sin(this._aimAngle) * SPEED,     // screen-space Y velocity
+      DAMAGE,
+      this._player.color,
+      this._aimAngle
+    );
+
+    // Kick off the 2-frame muzzle flash
+    this._muzzleFlashTimer = this._MUZZLE_FLASH_DURATION;
+  }
+
+  // ================================================================
+  // PX-9 RAPID PLASMA ARRAY — RENDERING
+  // ================================================================
+
+  // Render all active projectiles by converting each bolt's worldX to
+  // screen space via the current camera offset. Inactive slots are
+  // skipped inside Projectile.render() — no filtering needed here.
+  _renderProjectiles(ctx) {
+    this._projectilePool.forEach(p => p.render(ctx, this._cameraX));
+  }
+
+  // Draw a brief pixel-art muzzle flash at the plane's nose each time
+  // a shot is fired. Two visual layers — an outer colour burst and a
+  // white core — simulate a plasma discharge without blur or gradients
+  // (Visual Style Guide rule 1: no smooth effects on solid objects).
+  //
+  // The flash lasts _MUZZLE_FLASH_DURATION seconds. t = 1→0 as it fades:
+  //   t = 1 (first frame):  large bright burst, full alpha
+  //   t → 0 (second frame): smaller, fades out
+  _renderMuzzleFlash(ctx) {
+    if (this._muzzleFlashTimer <= 0) return;
+
+    const t     = this._muzzleFlashTimer / this._MUZZLE_FLASH_DURATION; // 1 → 0
+    const noseX = Math.round(this._player.x + Math.cos(this._aimAngle) * (this._player.width  / 2));
+    const noseY = Math.round(this._player.y + Math.sin(this._aimAngle) * (this._player.width  / 2));
+
+    ctx.save();
+    ctx.globalAlpha = t;
+
+    // Outer burst square — ship color, size steps from 12×12 down to 6×6
+    const sz = Math.round(6 + t * 6);
+    ctx.fillStyle = this._player.color;
+    ctx.fillRect(noseX - sz, noseY - sz, sz * 2, sz * 2);
+
+    // Bright white core — fixed 4×4 pixels at the flash centre
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(noseX - 2, noseY - 2, 4, 4);
+
+    ctx.restore();
   }
 }
 
