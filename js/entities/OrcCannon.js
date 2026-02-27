@@ -575,39 +575,140 @@ class OrcCannon {
     ctx.fillRect(  0 + t, -61, 1, 1);   // BC shadow
 
     // ----------------------------------------------------------------
-    // ORC GUNNER — blocky pixel-art figure standing on the platform.
-    // All pieces shift with the platform tilt via ox.
+    // ORC GUNNER — detailed 20×28 px pixel-art figure.
+    // Stands on platform top (y=−67). Neon plume extends a further
+    // 8 px upward; forearms reach up alongside the cannon barrel
+    // to crank level. All pieces shift with platform tilt via ox.
+    //
+    // X span (body): ox−8 to ox+11   (~20 px)
+    // Y span (body): −95 to −67      (28 px)
+    // Y span (plume): −103 to −95    (+8 px extra)
+    // Y span (arms):  up to −122     (alongside barrel)
     // ----------------------------------------------------------------
 
-    // Lower body / legs
-    ctx.fillStyle = '#2e5e12'; // darker orc green for lower half
-    ctx.fillRect( -7 + ox, -74, 5, 7); // left leg
-    ctx.fillRect(  2 + ox, -74, 5, 7); // right leg
+    // Boots — dark leather soles, 2 px tall × 4 px wide each
+    ctx.fillStyle = '#1e1208';
+    ctx.fillRect(-5 + ox, -69, 4, 2);   // left boot
+    ctx.fillRect( 2 + ox, -69, 4, 2);   // right boot
+    ctx.fillStyle = '#3a2010';           // toe-cap highlight (lighter edge)
+    ctx.fillRect(-5 + ox, -69, 4, 1);
+    ctx.fillRect( 2 + ox, -69, 4, 1);
 
-    // Torso
-    ctx.fillStyle = '#3a7a18'; // orc green
-    ctx.fillRect( -9 + ox, -91, 18, 18);
+    // Lower legs — dark-green pants, 5 px tall
+    ctx.fillStyle = '#2e5e12';
+    ctx.fillRect(-5 + ox, -74, 4, 5);   // left leg
+    ctx.fillRect( 2 + ox, -74, 4, 5);   // right leg
+    ctx.fillStyle = '#1e4008';           // inner-edge shadow for depth between legs
+    ctx.fillRect(-2 + ox, -74, 1, 5);   // right shadow edge of left leg
+    ctx.fillRect( 2 + ox, -74, 1, 5);   // left shadow edge of right leg
 
-    // Brass shoulder augment — right shoulder only (asymmetric per spec)
-    ctx.fillStyle = '#8a6a20'; // brass
-    ctx.fillRect(  7 + ox, -91, 7, 9);
-    ctx.fillStyle = '#6a4a10'; // darker brass rivet on augment
-    ctx.fillRect(  9 + ox, -95, 4, 4);
+    // Torso — dark leather / metal-panel armour, 13 px wide × 14 px tall
+    ctx.fillStyle = '#2a2018';           // dark charcoal-brown
+    ctx.fillRect(-6 + ox, -88, 13, 14);
+    // Top-face highlight — shows chest-plate thickness
+    ctx.fillStyle = '#3a3020';
+    ctx.fillRect(-6 + ox, -88, 13, 2);
+    // Horizontal chest panel division lines (1 px each)
+    ctx.fillStyle = '#1a1408';
+    ctx.fillRect(-6 + ox, -83, 13, 1);  // upper chest seam
+    ctx.fillRect(-6 + ox, -79, 13, 1);  // lower chest seam
+    // Centre vertical seam — armour plate groove
+    ctx.fillRect( 0 + ox, -88, 1, 14);
 
-    // Head
+    // Left shoulder — bare green skin with visible muscle highlight
+    ctx.fillStyle = '#4a9420';           // rich mid-green orc skin
+    ctx.fillRect(-8 + ox, -88, 2, 11);  // upper-arm column
+    ctx.fillStyle = '#6ab830';           // bright green muscle highlight (1 px strip)
+    ctx.fillRect(-8 + ox, -85, 1, 4);   // outer-face highlight
+    ctx.fillStyle = '#3a7a18';           // shadow where skin meets armour
+    ctx.fillRect(-7 + ox, -88, 1, 11);  // inner shadow column
+
+    // Right shoulder — brass mechanical augment, 5 px wide × 14 px tall
+    ctx.fillStyle = '#7a5a18';           // base brass colour
+    ctx.fillRect( 7 + ox, -91, 5, 14);  // augment block (taller than torso)
+    // 1 px panel detail lines
+    ctx.fillStyle = '#5a4010';
+    ctx.fillRect( 7 + ox, -87, 5, 1);   // upper horizontal panel line
+    ctx.fillRect( 7 + ox, -83, 5, 1);   // lower horizontal panel line
+    ctx.fillRect( 9 + ox, -91, 1, 14);  // vertical panel divider
+    // Bright 1 px highlight edge — polished metal facing the viewer
+    ctx.fillStyle = '#c4a040';
+    ctx.fillRect(11 + ox, -91, 1, 14);  // right face bright edge
+    ctx.fillRect( 7 + ox, -91, 5, 1);   // top face bright edge
+    // Raised centre panel detail
+    ctx.fillStyle = '#9a7820';
+    ctx.fillRect( 8 + ox, -90, 2, 5);
+
+    // Head — blocky orc skull, 10 px wide × 7 px tall
+    ctx.fillStyle = '#4a9420';           // rich mid-green orc skin
+    ctx.fillRect(-5 + ox, -95, 10, 7);
+    // Right-side shadow column (1 px darker green) — depth / jaw shadow
     ctx.fillStyle = '#3a7a18';
-    ctx.fillRect( -7 + ox, -105, 14, 14);
+    ctx.fillRect( 4 + ox, -95, 1, 7);
+    // Helmet rim — top 2 rows recoloured as dark armour material
+    ctx.fillStyle = '#2a2018';
+    ctx.fillRect(-5 + ox, -95, 10, 2);
+    // Helmet brass rivets — 1 px at each side of the rim
+    ctx.fillStyle = '#8a6a20';
+    ctx.fillRect(-5 + ox, -94, 1, 1);   // left rivet
+    ctx.fillRect( 3 + ox, -94, 1, 1);   // right rivet
 
-    // Eyes — red-orange, two 4×4 px squares
-    ctx.fillStyle = '#ee4400';
-    ctx.fillRect( -5 + ox, -100, 4, 4);
-    ctx.fillRect(  2 + ox, -100, 4, 4);
+    // Eyes — 2×2 px bright yellow, menacing
+    ctx.fillStyle = '#ffcc00';
+    ctx.fillRect(-3 + ox, -92, 2, 2);   // left eye
+    ctx.fillRect( 1 + ox, -92, 2, 2);   // right eye
+    // Inner highlight glint (top-left pixel of each eye)
+    ctx.fillStyle = '#ffff88';
+    ctx.fillRect(-3 + ox, -92, 1, 1);
+    ctx.fillRect( 1 + ox, -92, 1, 1);
 
-    // Neon fur plume on helmet — small plume = basic rank indicator
-    // Bright magenta: high-contrast against the dark sky
-    ctx.fillStyle = '#ff44ff';
-    ctx.fillRect( -4 + ox, -112, 7, 7); // plume base
-    ctx.fillRect( -2 + ox, -117, 4, 5); // plume tip
+    // Mouth — 1 px dark sneer line across middle of lower face
+    ctx.fillStyle = '#1a0a00';
+    ctx.fillRect(-3 + ox, -90, 5, 1);   // orc sneer
+    // Tusks — 1 px wide ivory pixels, 2 px extending down at each corner
+    ctx.fillStyle = '#e8d090';           // ivory
+    ctx.fillRect(-3 + ox, -89, 1, 2);   // left tusk
+    ctx.fillRect( 2 + ox, -89, 1, 2);   // right tusk
+
+    // Neon fur plume — individual 1 px wide strands at varied heights
+    // Heights differ by 1–2 px for organic, non-blocky silhouette
+    ctx.fillStyle = '#ff44cc';           // bright pink
+    ctx.fillRect(-3 + ox, -103, 1, 8);  // strand 1 — tallest (8 px)
+    ctx.fillStyle = '#ff00ff';           // hot magenta
+    ctx.fillRect(-2 + ox, -101, 1, 6);  // strand 2 (6 px)
+    ctx.fillStyle = '#cc44ff';           // pale purple
+    ctx.fillRect(-1 + ox, -102, 1, 7);  // strand 3 (7 px)
+    ctx.fillStyle = '#ff44cc';           // bright pink
+    ctx.fillRect( 0 + ox, -103, 1, 8);  // strand 4 — tallest (8 px)
+    ctx.fillStyle = '#ff88ff';           // light pink
+    ctx.fillRect( 1 + ox, -100, 1, 5);  // strand 5 — shortest (5 px)
+    ctx.fillStyle = '#ff00ff';           // hot magenta
+    ctx.fillRect( 2 + ox, -102, 1, 7);  // strand 6 (7 px)
+    ctx.fillStyle = '#cc44ff';           // pale purple
+    ctx.fillRect( 3 + ox, -101, 1, 6);  // strand 7 (6 px)
+
+    // Forearms gripping the crank handle.
+    // Both arms extend up outside the cannon barrel so they read clearly
+    // against the structure. Cannon barrel covers the gap between head
+    // and fist naturally since it is drawn on top.
+
+    // Left forearm — bare green skin, left of barrel
+    ctx.fillStyle = '#4a9420';           // orc skin
+    ctx.fillRect(-8 + ox, -122, 2, 34); // shaft from shoulder (y=−88) to fist top
+    // Knuckle pixels — 1 px bright green highlights on left fist
+    ctx.fillStyle = '#6ab830';
+    ctx.fillRect(-8 + ox, -122, 2, 1);  // top knuckle row
+    ctx.fillRect(-7 + ox, -121, 1, 1);  // secondary knuckle pixel
+
+    // Right forearm — brass-augmented arm, right of barrel, reaching to crank
+    ctx.fillStyle = '#7a5a18';           // brass/metal
+    ctx.fillRect( 8 + ox, -124, 3, 36); // shaft from shoulder (y=−88) to fist top
+    // Horizontal fist section extending right toward the crank grip
+    ctx.fillRect( 8 + ox, -124, 5, 3);  // fist/hand wrapping over crank arm
+    // Knuckle highlight on right fist — polished metal augment
+    ctx.fillStyle = '#c4a040';
+    ctx.fillRect( 8 + ox, -124, 5, 1);  // bright top-of-fist edge
+    ctx.fillRect(12 + ox, -124, 1, 3);  // right grip highlight
 
     // ----------------------------------------------------------------
     // CANNON — chunky hand-cranked barrel, asymmetric and improvised.
