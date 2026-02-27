@@ -416,28 +416,112 @@ class OrcCannon {
     const cx = t;                  // cannon X offset (tracks platform)
 
     // ----------------------------------------------------------------
-    // BASE — wide dark iron plate, rust-brown edge pixels
+    // BASE — wide dark iron plate, worn texture, bolt heads, rust stains
     // ----------------------------------------------------------------
     ctx.fillStyle = '#3a3838';
     ctx.fillRect(-28, -11, 56, 9);          // main plate body
+
+    // Worn texture — alternating 1px rows across the plate middle
+    ctx.fillStyle = '#3e3c3a';
+    ctx.fillRect(-28, -10, 56, 1);          // slightly lighter row
+    ctx.fillStyle = '#363432';
+    ctx.fillRect(-28,  -8, 56, 1);          // slightly darker row
+    ctx.fillStyle = '#3e3c3a';
+    ctx.fillRect(-28,  -6, 56, 1);          // lighter row
+    ctx.fillStyle = '#363432';
+    ctx.fillRect(-28,  -4, 56, 1);          // darker row
+
     ctx.fillStyle = '#4a2a12';              // rust-brown top edge
     ctx.fillRect(-28, -11, 56, 2);
     ctx.fillStyle = '#5a3a1a';              // lighter rust bottom edge
     ctx.fillRect(-28,  -2, 56, 2);
-    ctx.fillStyle = '#222220';              // bolt holes — two dark squares
+
+    // Rust stains — scattered 1px pixels in rust-brown along both edges
+    ctx.fillStyle = '#6b2c0c';
+    ctx.fillRect(-27,  -3, 1, 1);
+    ctx.fillRect(-20,  -3, 1, 1);
+    ctx.fillRect( -9,  -3, 1, 1);
+    ctx.fillRect(  5,  -3, 1, 1);
+    ctx.fillRect( 18,  -3, 1, 1);
+    ctx.fillRect( 25,  -3, 1, 1);
+    ctx.fillRect(-26, -11, 1, 1);
+    ctx.fillRect(-12, -11, 1, 1);
+    ctx.fillRect(  7, -11, 1, 1);
+    ctx.fillRect( 22, -11, 1, 1);
+
+    // Existing bolt holes — two recessed dark squares
+    ctx.fillStyle = '#222220';
     ctx.fillRect(-23,  -7,  4, 4);
     ctx.fillRect( 19,  -7,  4, 4);
 
+    // Bolt heads at each corner — single bright grey pixel + dark shadow below
+    ctx.fillStyle = '#909080';
+    ctx.fillRect(-26, -10, 1, 1);           // top-left bolt head
+    ctx.fillRect( 25, -10, 1, 1);           // top-right bolt head
+    ctx.fillRect(-26,  -4, 1, 1);           // bottom-left bolt head
+    ctx.fillRect( 25,  -4, 1, 1);           // bottom-right bolt head
+    ctx.fillStyle = '#1e1c1a';
+    ctx.fillRect(-26,  -9, 1, 1);           // TL shadow
+    ctx.fillRect( 25,  -9, 1, 1);           // TR shadow
+    ctx.fillRect(-26,  -3, 1, 1);           // BL shadow
+    ctx.fillRect( 25,  -3, 1, 1);           // BR shadow
+
     // ----------------------------------------------------------------
-    // TOWER LEGS — two thin salvaged struts, intentionally uneven heights
+    // TOWER LEGS — two mismatched salvaged struts; left is wider,
+    // right shows more surface damage suggesting different scrap origins
     // ----------------------------------------------------------------
     ctx.fillStyle = '#2e2c22';
-    ctx.fillRect(-21, -60,  7, 49); // left leg  — 49 px tall (taller)
-    ctx.fillRect( 14, -56,  7, 46); // right leg — 46 px tall (shorter = uneven)
+    ctx.fillRect(-22, -60,  8, 49); // left leg  — 8px wide (wider salvage piece)
+    ctx.fillRect( 14, -56,  7, 46); // right leg — 7px wide, 46 px tall
 
     // Horizontal brace — single connecting bar for structural plausibility
     ctx.fillStyle = '#383630';
     ctx.fillRect(-14, -39, 28, 4);
+
+    // Diagonal cross braces — rust-orange X between the legs suggesting
+    // structural reinforcement bolted in after original construction
+    ctx.fillStyle = '#b05818';
+    for (let i = 0; i <= 26; i++) {
+      ctx.fillRect(-13 + i, Math.round(-54 + i * 40 / 26), 1, 1); // \ diagonal
+      ctx.fillRect(-13 + i, Math.round(-14 - i * 40 / 26), 1, 1); // / diagonal
+    }
+
+    // Panel seams — 1px vertical line dividing each strut into sections
+    ctx.fillStyle = '#3e3c2e';                  // slightly lighter than leg body
+    ctx.fillRect(-18, -60, 1, 49);              // left leg seam (centre column)
+    ctx.fillRect( 17, -56, 1, 46);              // right leg seam (centre column)
+
+    // Rivets — bright pixel + dark shadow pixel at regular intervals
+    ctx.fillStyle = '#a09080';
+    ctx.fillRect(-21, -55, 1, 1);               // left leg rivet 1
+    ctx.fillRect(-21, -45, 1, 1);               // left leg rivet 2
+    ctx.fillRect(-21, -35, 1, 1);               // left leg rivet 3
+    ctx.fillRect(-21, -25, 1, 1);               // left leg rivet 4
+    ctx.fillRect(-21, -15, 1, 1);               // left leg rivet 5
+    ctx.fillRect( 20, -51, 1, 1);               // right leg rivet 1
+    ctx.fillRect( 20, -41, 1, 1);               // right leg rivet 2
+    ctx.fillRect( 20, -31, 1, 1);               // right leg rivet 3
+    ctx.fillRect( 20, -21, 1, 1);               // right leg rivet 4
+    ctx.fillStyle = '#181612';
+    ctx.fillRect(-21, -54, 1, 1);               // left leg rivet shadow 1
+    ctx.fillRect(-21, -44, 1, 1);               // left leg rivet shadow 2
+    ctx.fillRect(-21, -34, 1, 1);               // left leg rivet shadow 3
+    ctx.fillRect(-21, -24, 1, 1);               // left leg rivet shadow 4
+    ctx.fillRect(-21, -14, 1, 1);               // left leg rivet shadow 5
+    ctx.fillRect( 20, -50, 1, 1);               // right leg rivet shadow 1
+    ctx.fillRect( 20, -40, 1, 1);               // right leg rivet shadow 2
+    ctx.fillRect( 20, -30, 1, 1);               // right leg rivet shadow 3
+    ctx.fillRect( 20, -20, 1, 1);               // right leg rivet shadow 4
+
+    // Right leg surface damage — dark impact marks + rust bleed suggesting
+    // heavier battlefield wear than the left leg
+    ctx.fillStyle = '#1a180c';
+    ctx.fillRect( 15, -49, 2, 1);               // impact mark
+    ctx.fillRect( 16, -38, 2, 1);               // impact mark
+    ctx.fillRect( 15, -27, 3, 1);               // impact mark (wider)
+    ctx.fillStyle = '#5a3010';
+    ctx.fillRect( 14, -50, 1, 1);               // rust bleed at impact
+    ctx.fillRect( 17, -39, 1, 1);               // rust bleed at impact
 
     // Damage state 2: 2×2 px zigzag crack on the left strut
     if (this._crackVisible) {
@@ -455,11 +539,40 @@ class OrcCannon {
     // ----------------------------------------------------------------
     ctx.fillStyle = '#585850';
     ctx.fillRect(-21 + t, -67, 42, 7);  // platform deck
-    ctx.fillStyle = '#2a2820';           // visible bolt pixels at each corner
-    ctx.fillRect(-21 + t, -67, 4, 4);
-    ctx.fillRect( 18 + t, -67, 4, 4);
-    ctx.fillRect(-21 + t, -63, 4, 4);
-    ctx.fillRect( 18 + t, -63, 4, 4);
+
+    // Panel / plank lines — 1px horizontal seams in alternating tones
+    ctx.fillStyle = '#474740';           // darker plank seam
+    ctx.fillRect(-21 + t, -65, 42, 1);
+    ctx.fillStyle = '#626258';           // lighter plank seam
+    ctx.fillRect(-21 + t, -63, 42, 1);
+
+    // Front lip edge — 1px brighter line along the bottom face suggesting
+    // a metal rim that keeps the platform from flexing outward
+    ctx.fillStyle = '#727062';
+    ctx.fillRect(-21 + t, -61, 42, 1);
+
+    // Corner bolt recesses — 3×3 dark squares at each corner
+    ctx.fillStyle = '#2a2820';
+    ctx.fillRect(-21 + t, -67, 3, 3);   // top-left
+    ctx.fillRect( 18 + t, -67, 3, 3);   // top-right
+    ctx.fillRect(-21 + t, -63, 3, 3);   // bottom-left
+    ctx.fillRect( 18 + t, -63, 3, 3);   // bottom-right
+
+    // Bolt heads — bright pixel + dark shadow at each corner and midpoint
+    ctx.fillStyle = '#a09888';
+    ctx.fillRect(-20 + t, -66, 1, 1);   // top-left bolt head
+    ctx.fillRect( 19 + t, -66, 1, 1);   // top-right bolt head
+    ctx.fillRect(-20 + t, -62, 1, 1);   // bottom-left bolt head
+    ctx.fillRect( 19 + t, -62, 1, 1);   // bottom-right bolt head
+    ctx.fillRect(  0 + t, -66, 1, 1);   // top-centre bolt head
+    ctx.fillRect(  0 + t, -62, 1, 1);   // bottom-centre bolt head
+    ctx.fillStyle = '#1a1810';
+    ctx.fillRect(-20 + t, -65, 1, 1);   // TL shadow
+    ctx.fillRect( 19 + t, -65, 1, 1);   // TR shadow
+    ctx.fillRect(-20 + t, -61, 1, 1);   // BL shadow
+    ctx.fillRect( 19 + t, -61, 1, 1);   // BR shadow
+    ctx.fillRect(  0 + t, -65, 1, 1);   // TC shadow
+    ctx.fillRect(  0 + t, -61, 1, 1);   // BC shadow
 
     // ----------------------------------------------------------------
     // ORC GUNNER — blocky pixel-art figure standing on the platform.
