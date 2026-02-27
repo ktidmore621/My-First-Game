@@ -124,6 +124,11 @@ class PilotGameState {
       new OrcCannon(3600, _groundY),
     ];
 
+    // ---- OrcSilo — massive missile launch silo ----
+    // One silo placed at world X=3000 on the horizon line.
+    // Visual only — no update/collision logic yet.
+    this._orcSilo = new OrcSilo(3000, _groundY);
+
     // Register death callback
     this._player.health.onDeath(() => {
       if (!this._gameOverPending) {
@@ -382,6 +387,10 @@ class PilotGameState {
     // Drawn after the ground and before the player ship so the plane flies
     // visually in front of the towers.
     this._orcCannons.forEach(cannon => cannon.render(ctx, this._cameraX));
+
+    // OrcSilo — visual only, no update yet; drawn at the same depth layer
+    // as the OrcCannons so the player plane flies in front of it.
+    this._orcSilo.render(ctx, this._cameraX);
 
     // Aim indicator line from the plane nose (right-stick active only)
     if (this._input.rightStick.active) {
