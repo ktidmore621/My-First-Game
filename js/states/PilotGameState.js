@@ -113,14 +113,15 @@ class PilotGameState {
     // Pre-build the ground detail array once so we don't allocate each frame.
     this._groundFeatures = _buildGroundFeatures();
 
-    // ---- Placeholder enemy world positions ----
-    // Markers placed at fixed world-space X coordinates across the battlefield.
-    // Each is drawn at (worldX − _cameraX) so it scrolls with the ground.
-    // Replace with real entity classes when enemy logic is implemented.
-    this._enemyPlaceholders = [
-      { worldX: 1200, screenY: this._H * 0.72 - 18, label: '▲ AA Gun'  },
-      { worldX: 2400, screenY: this._H * 0.72 - 18, label: '▲ Missile' },
-      { worldX: 3600, screenY: this._H * 0.72 - 22, label: '▲ Base'    },
+    // ---- OrcCannon ground enemies ----
+    // Three Voidheart plasma cannon emplacements placed at fixed world-space X
+    // positions across the battlefield. Each sits on the horizon line (groundY).
+    // See OrcCannon.js for the full wind-up state machine and visual design.
+    const _groundY = Math.round(this._H * 0.72);
+    this._orcCannons = [
+      new OrcCannon(1200, _groundY),
+      new OrcCannon(2400, _groundY),
+      new OrcCannon(3600, _groundY),
     ];
 
     // Register death callback
@@ -270,6 +271,57 @@ class PilotGameState {
       if (offSideX || offSideY) p.deactivate();
     });
 
+    // ================================================================
+    // ORC CANNON — UPDATE & COLLISION DETECTION
+    // ================================================================
+
+    // Player hitbox: slightly smaller than the visual ship (64×28 px) so that
+    // near-misses feel fair — a bolt clipping the wing tip does not count.
+    const PLAYER_HIT_W = 50;
+    const PLAYER_HIT_H = 22;
+
+    this._orcCannons.forEach(cannon => {
+      if (!cannon.isAlive()) return;
+
+      // Feed current player world/screen position so the cannon can run its
+      // detection check and advance the wind-up state machine.
+      cannon.update(dt, this._worldX, this._player.y);
+
+      // ---- Enemy bolt → player collision ----
+      // Check cannon bolts against the player's hitbox every frame.
+      // Only test while the player is alive (prevents double-death trigger).
+      if (this._player.isAlive()) {
+        const hit = cannon.checkBoltsHitPlayer(
+          this._worldX, this._player.y,
+          PLAYER_HIT_W, PLAYER_HIT_H
+        );
+        if (hit) {
+          // Orc plasma bolt deals 25 damage — 2–4 hits to destroy depending on plane
+          this._player.health.takeDamage(25);
+        }
+      }
+    });
+
+    // ---- Player bolt → OrcCannon collision ----
+    // After projectiles have been updated this frame, check each active player
+    // bolt against each alive cannon's structure hitbox (AABB overlap).
+    // On hit: deal 1 damage to the cannon, deactivate the bolt.
+    // The cannon's HealthSystem handles the progressive damage callbacks.
+    this._projectilePool.forEach(p => {
+      if (!p.active) return;
+      this._orcCannons.forEach(cannon => {
+        if (!cannon.isAlive()) return;
+        const hb = cannon.getStructureHitbox();
+        // hb.x / hb.w are world-space; hb.y / hb.h are screen-space.
+        // Projectile worldX and y are in the same respective coordinate spaces.
+        if (p.worldX > hb.x && p.worldX < hb.x + hb.w &&
+            p.y      > hb.y && p.y      < hb.y + hb.h) {
+          cannon.health.takeDamage(1); // 1 damage per bolt — 3 hits to destroy
+          p.deactivate();
+        }
+      });
+    });
+
     // ---- Button placeholders ----
     if (this._input.wasTappedInRegion(820, 460, 130, 58)) {
       console.log('[Input] Weapon Select tapped — implement weapon cycling here');
@@ -307,14 +359,10 @@ class PilotGameState {
     // battlefield boundary — signals the hard wall before they hit it
     this._drawBoundaryIndicator(ctx, W, H);
 
-    // Placeholder enemy markers at their world-space positions.
-    // screenX = worldX − _cameraX. Skip markers that are off-screen.
-    this._enemyPlaceholders.forEach(e => {
-      const screenX = e.worldX - this._cameraX;
-      if (screenX > -40 && screenX < W + 40) {
-        _drawPlaceholderEnemy(ctx, screenX, e.screenY, e.label);
-      }
-    });
+    // OrcCannon ground enemies — each handles its own screen-cull and render.
+    // Drawn after the ground and before the player ship so the plane flies
+    // visually in front of the towers.
+    this._orcCannons.forEach(cannon => cannon.render(ctx, this._cameraX));
 
     // Aim indicator line from the plane nose (right-stick active only)
     if (this._input.rightStick.active) {
