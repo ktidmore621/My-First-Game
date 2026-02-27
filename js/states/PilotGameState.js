@@ -275,10 +275,15 @@ class PilotGameState {
     // ORC CANNON — UPDATE & COLLISION DETECTION
     // ================================================================
 
-    // Player hitbox: slightly smaller than the visual ship (64×28 px) so that
-    // near-misses feel fair — a bolt clipping the wing tip does not count.
-    const PLAYER_HIT_W = 50;
-    const PLAYER_HIT_H = 22;
+    // Player hitbox: intentionally ~80% of the visual ship size (64×28 px)
+    // so that near-misses feel fair — a bolt clipping the wing tip does not
+    // register as a hit. The rectangle is centred on (this._worldX, player.y).
+    //   Left edge  = this._worldX - PLAYER_HIT_W / 2
+    //   Right edge = this._worldX + PLAYER_HIT_W / 2
+    //   Top edge   = this._player.y - PLAYER_HIT_H / 2
+    //   Bottom edge= this._player.y + PLAYER_HIT_H / 2
+    const PLAYER_HIT_W = 50; // ≈ 78% of visual width  (64 px)
+    const PLAYER_HIT_H = 22; // ≈ 79% of visual height (28 px)
 
     this._orcCannons.forEach(cannon => {
       if (!cannon.isAlive()) return;
@@ -288,36 +293,50 @@ class PilotGameState {
       cannon.update(dt, this._worldX, this._player.y);
 
       // ---- Enemy bolt → player collision ----
-      // Check cannon bolts against the player's hitbox every frame.
-      // Only test while the player is alive (prevents double-death trigger).
+      // OrcCannon.checkBoltsHitPlayer() tests each of the cannon's active
+      // 6×6 px bolts (world-space X, screen-space Y) against the player
+      // hitbox rectangle. Returns true on the first impact and deactivates
+      // that bolt so it cannot deal damage again.
+      // Only test while the player is alive — prevents a double-death trigger
+      // if two bolts land in the same frame.
       if (this._player.isAlive()) {
         const hit = cannon.checkBoltsHitPlayer(
           this._worldX, this._player.y,
           PLAYER_HIT_W, PLAYER_HIT_H
         );
         if (hit) {
-          // Orc plasma bolt deals 25 damage — 2–4 hits to destroy depending on plane
-          this._player.health.takeDamage(25);
+          // One orc plasma bolt deals 10 damage to the player hull.
+          // A Scout (38 HP) goes down in 4 hits; a Bomber (95 HP) takes 10.
+          this._player.health.takeDamage(10);
         }
       }
     });
 
     // ---- Player bolt → OrcCannon collision ----
-    // After projectiles have been updated this frame, check each active player
-    // bolt against each alive cannon's structure hitbox (AABB overlap).
-    // On hit: deal 1 damage to the cannon, deactivate the bolt.
-    // The cannon's HealthSystem handles the progressive damage callbacks.
+    // AABB test: for each active player bolt check whether its centre point
+    // falls inside the cannon's structure bounding box.
+    //
+    // Coordinate spaces:
+    //   hb.x, hb.w  → world-space (same axis as p.worldX)
+    //   hb.y, hb.h  → screen-space (same axis as p.y)
+    //
+    // Rectangle overlap rule (axis-aligned):
+    //   Horizontal: p.worldX > hb.x  AND  p.worldX < hb.x + hb.w
+    //   Vertical  : p.y      > hb.y  AND  p.y      < hb.y + hb.h
+    //
+    // On hit: deal 1 damage to the cannon and deactivate the bolt so it
+    // cannot pass through and hit again in the same frame.
+    // The cannon's HealthSystem fires the progressive-damage callbacks
+    // (crack, tilt, collapse) automatically — no extra handling needed here.
     this._projectilePool.forEach(p => {
       if (!p.active) return;
       this._orcCannons.forEach(cannon => {
         if (!cannon.isAlive()) return;
         const hb = cannon.getStructureHitbox();
-        // hb.x / hb.w are world-space; hb.y / hb.h are screen-space.
-        // Projectile worldX and y are in the same respective coordinate spaces.
         if (p.worldX > hb.x && p.worldX < hb.x + hb.w &&
             p.y      > hb.y && p.y      < hb.y + hb.h) {
-          cannon.health.takeDamage(1); // 1 damage per bolt — 3 hits to destroy
-          p.deactivate();
+          cannon.health.takeDamage(1); // 1 damage per bolt — 3 direct hits to destroy
+          p.deactivate();              // bolt consumed on contact
         }
       });
     });
