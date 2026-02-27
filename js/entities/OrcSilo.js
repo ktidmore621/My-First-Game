@@ -137,15 +137,26 @@ class OrcSilo {
     // Staggered offsets so the four lights never all blink simultaneously.
     this._lightPhases = [0.0, 1.4, 2.8, 4.2];
 
+    // ---- Last-known player position — used by _renderMissiles for proximity glow ----
+    this._lastPlayerWorldX = 0;
+    this._lastPlayerY      = 270;
+
     // ---- Outgoing missiles — pool of 2 in-flight ----
-    // Each slot: { active, worldX, y, originY, angle, age, velocityX, velocityY }
-    // worldX is world-space; angle in radians (-π/2 = pointing up); age in seconds.
+    // Each slot: { active, worldX, y, originY, heading, age, velocityX, velocityY, hits, hitFlashTimer }
+    // worldX/heading are world-space; heading in radians (-π/2 = pointing up); age in seconds.
+    // hits: damage taken from player projectiles (6 = destroyed mid-air).
+    // hitFlashTimer: counts down from 2/60 s to 0 — draws a white flash overlay.
     // Pool size = max concurrent missiles. Increase for higher difficulty levels
     this._missiles = Array.from({ length: 2 }, () => ({
       active: false, worldX: 0, y: 0, originY: 0,
-      angle: -Math.PI / 2, age: 0,
+      heading: -Math.PI / 2, age: 0,
       velocityX: 0, velocityY: 0,
+      hits: 0, hitFlashTimer: 0,
     }));
+
+    // ---- Mid-air missile explosions — spawned when a missile is shot down ----
+    // Each entry: { worldX, y, timer, fragments[], sparks[] }
+    this._midairExplosions = [];
 
     // ---- Damage-state rendering flags ----
     this._crackLeft      = false; // zigzag on rim left section after hit 2
@@ -195,7 +206,14 @@ class OrcSilo {
   update(dt, playerWorldX, playerY, cameraX) {
     if (this._dead) return;
 
+    // Cache player position each frame so _renderMissiles can access it
+    this._lastPlayerWorldX = playerWorldX;
+    this._lastPlayerY      = playerY;
+
     this._pulseT += dt;
+
+    // Always update mid-air explosions, even while the silo is dying
+    this._updateMidairExplosions(dt);
 
     if (this._dying) {
       this._updateExplosion(dt);
@@ -203,32 +221,37 @@ class OrcSilo {
     }
 
     // ---- Advance in-flight missiles with homing logic ----
-    // Missiles steer toward the player for MISSILE_TRACKING_DURATION seconds
-    // (turn rate capped at MISSILE_TURN_RATE deg/s), then fly ballistic.
+    // Each frame: compute angle from missile to player, rotate heading toward
+    // it at MISSILE_TURN_RATE deg/s (shortest path), then drive velocity from
+    // the new heading. This recalculates every frame regardless of player speed.
     const trackRateRad = (MISSILE_TURN_RATE * Math.PI / 180); // deg/s → rad/s
     this._missiles.forEach(m => {
       if (!m.active) return;
       m.age += dt;
 
-      // Homing phase: steer toward player while tracking window is open
+      // Countdown the 2-frame hit-flash overlay
+      m.hitFlashTimer = Math.max(0, m.hitFlashTimer - dt);
+
+      // Homing phase: steer heading toward player while tracking window is open
       if (m.age < MISSILE_TRACKING_DURATION) {
-        const dx = playerWorldX - m.worldX;
-        const dy = playerY      - m.y;
+        // Angle from missile's current world position to player's current position
+        const dx          = playerWorldX - m.worldX;
+        const dy          = playerY      - m.y;
         const targetAngle = Math.atan2(dy, dx);
 
-        // Shortest angular path to target, wrapped to −π…+π
-        let delta = targetAngle - m.angle;
+        // Shortest rotation path to target angle, wrapped to −π…+π
+        let delta = targetAngle - m.heading;
         while (delta >  Math.PI) delta -= Math.PI * 2;
         while (delta < -Math.PI) delta += Math.PI * 2;
 
         // Clamp turn to max rate this frame
-        delta    = Math.max(-trackRateRad * dt, Math.min(trackRateRad * dt, delta));
-        m.angle += delta;
+        delta      = Math.max(-trackRateRad * dt, Math.min(trackRateRad * dt, delta));
+        m.heading += delta;
       }
 
-      // Velocity from current angle and fixed speed
-      m.velocityX = Math.cos(m.angle) * MISSILE_SPEED;
-      m.velocityY = Math.sin(m.angle) * MISSILE_SPEED;
+      // Velocity always derived from current heading — ballistic after tracking ends
+      m.velocityX = Math.cos(m.heading) * MISSILE_SPEED;
+      m.velocityY = Math.sin(m.heading) * MISSILE_SPEED;
 
       m.worldX += m.velocityX * dt;
       m.y      += m.velocityY * dt;
@@ -425,6 +448,39 @@ class OrcSilo {
     return false;
   }
 
+  // Tests all active player projectiles against all active missiles.
+  // Called from PilotGameState each frame (after projectile-vs-structure checks).
+  //
+  // projectilePool : the full Projectile pool from PilotGameState
+  //   Each entry has: .active (bool), .worldX (world-space), .y (screen-space),
+  //                   .deactivate() method.
+  //
+  // Missile hitbox: 10 × 21 px centred on missile world position.
+  // 6 hits destroy the missile (mid-air explosion + deactivate).
+  // Each hit triggers a 2-frame white flash overlay on the sprite.
+  checkProjectilesHitMissiles(projectilePool) {
+    this._missiles.forEach(m => {
+      if (!m.active) return;
+      // 10 × 21 AABB centred on (m.worldX, m.y)
+      const ml = m.worldX - 5;   // left edge
+      const mr = m.worldX + 5;   // right edge
+      const mt = m.y      - 10;  // top edge
+      const mb = m.y      + 11;  // bottom edge (21 px total)
+      projectilePool.forEach(p => {
+        if (!p.active) return;
+        if (p.worldX > ml && p.worldX < mr && p.y > mt && p.y < mb) {
+          m.hits++;
+          m.hitFlashTimer = 2 / 60; // 2-frame white-fill flash
+          p.deactivate();
+          if (m.hits >= 6) {
+            this._spawnMidairExplosion(m.worldX, m.y);
+            m.active = false;
+          }
+        }
+      });
+    });
+  }
+
   // ================================================================
   // PRIVATE — FIRING
   // ================================================================
@@ -442,14 +498,16 @@ class OrcSilo {
     const tipWorldX = this.worldX;
     const tipY      = this._groundY - 28; // top of the armored rim
 
-    m.active    = true;
-    m.worldX    = tipWorldX;
-    m.y         = tipY;
-    m.originY   = tipY;
-    m.angle     = -Math.PI / 2; // launch straight up; tracking steers from there
-    m.age       = 0;
-    m.velocityX = 0;
-    m.velocityY = -MISSILE_SPEED;
+    m.active        = true;
+    m.worldX        = tipWorldX;
+    m.y             = tipY;
+    m.originY       = tipY;
+    m.heading       = -Math.PI / 2; // launch straight up; homing steers from there
+    m.age           = 0;
+    m.velocityX     = 0;
+    m.velocityY     = -MISSILE_SPEED;
+    m.hits          = 0;
+    m.hitFlashTimer = 0;
   }
 
   // ================================================================
@@ -561,6 +619,49 @@ class OrcSilo {
       { x: 0, y: -14, vx:  130, vy: -165, color: '#ffd700' },
       { x: 0, y: -14, vx:  -70, vy: -220, color: '#ffff44' },
     ];
+  }
+
+  // Spawns a small Voidheart explosion at (worldX, y) when a missile is
+  // shot down. Fragments and sparks share the same palette as the main
+  // silo explosion so they feel like the same weapon system.
+  _spawnMidairExplosion(worldX, y) {
+    this._midairExplosions.push({
+      worldX, y, timer: 0,
+      fragments: [
+        { x: 0, y: 0, vx: -160, vy: -180, w: 3, h: 3, color: '#aa0060' },
+        { x: 0, y: 0, vx:  180, vy: -200, w: 3, h: 3, color: '#ff40cc' },
+        { x: 0, y: 0, vx:  -70, vy: -220, w: 2, h: 2, color: '#cc20a0' },
+        { x: 0, y: 0, vx:   80, vy: -210, w: 2, h: 2, color: '#880050' },
+        { x: 0, y: 0, vx: -200, vy: -130, w: 2, h: 2, color: '#6a0040' },
+        { x: 0, y: 0, vx:  210, vy: -140, w: 2, h: 2, color: '#3a3028' },
+      ],
+      sparks: [
+        { x: 0, y: 0, vx: -240, vy: -250, color: '#ffffff' },
+        { x: 0, y: 0, vx:  260, vy: -240, color: '#ffff00' },
+        { x: 0, y: 0, vx:  -50, vy: -270, color: '#ffffff' },
+        { x: 0, y: 0, vx:   70, vy: -260, color: '#ffff44' },
+      ],
+    });
+  }
+
+  // Advances all active mid-air explosions and removes expired ones.
+  // Called from update() before the dying-check so explosions continue
+  // rendering even while the silo death animation is playing.
+  _updateMidairExplosions(dt) {
+    this._midairExplosions.forEach(ex => {
+      ex.timer += dt;
+      ex.fragments.forEach(f => {
+        f.x  += f.vx * dt;
+        f.y  += f.vy * dt;
+        f.vy += 80 * dt; // gravity
+      });
+      ex.sparks.forEach(s => {
+        s.x  += s.vx * dt;
+        s.y  += s.vy * dt;
+        s.vy += 50 * dt; // lighter drift
+      });
+    });
+    this._midairExplosions = this._midairExplosions.filter(ex => ex.timer < 0.6);
   }
 
   _updateExplosion(dt) {
@@ -1649,12 +1750,27 @@ class OrcSilo {
 
   // ----------------------------------------------------------------
   // MISSILE RENDERING — screen-space; called after ctx.restore()
-  // Each missile is a small pixel-art rocket:
-  //   Tip    → single-pixel Voidheart warhead point
-  //   Head   → 4×6 px purplish-red warhead body
-  //   Body   → 4×10 px dark metal fuselage with panel seam
-  //   Fins   → 2×3 px stabilizers at the base
-  //   Engine → 6×4 px orange-yellow glow exhaust trail
+  //
+  // Each missile is drawn centered on its screen position, then rotated
+  // to face its current direction of travel:
+  //   angle = Math.atan2(velocityY, velocityX) + Math.PI/2
+  //   (+PI/2 aligns the sprite's upward tip with the forward direction)
+  //
+  // Sprite layout (all coords relative to missile centre after transform):
+  //   Tip      :  y = −18 … −17  (warhead point)
+  //   Warhead  :  y = −17 … −6   (12 px, 14 px wide)
+  //   Fuselage :  y = −6  … +12  (18 px, 10 px wide)
+  //   Fins     :  y = +6  … +12  ( 6 px, extend to 14 px wide)
+  //   Flame    :  y = +12 … +18  ( 6 px — always at the tail)
+  //
+  // The exhaust flame is always at the tail (positive-y end of the sprite),
+  // so it stays visually behind the missile regardless of heading.
+  //
+  // Voidheart warhead glow pulses brighter as the missile closes on the
+  // player — using _lastPlayerWorldX / _lastPlayerY stored during update().
+  //
+  // Hit flash: when hitFlashTimer > 0, a full-sprite white fillRect is
+  // drawn on top (lasts 2 render frames ≈ 2/60 s).
   // ----------------------------------------------------------------
   _renderMissiles(ctx, cameraX) {
     this._missiles.forEach(m => {
@@ -1662,48 +1778,101 @@ class OrcSilo {
       const sx = Math.round(m.worldX - cameraX);
       const sy = Math.round(m.y);
 
-      // ---- Total missile bounds: 14 px wide × 36 px tall ----
-      // Layout from tip (sy−18) down to flame bottom (sy+18):
-      //   Warhead  : sy−18 … sy−6   (12 px, 14 px wide at body)
-      //   Fuselage : sy−6  … sy+12  (18 px, 10 px wide)
-      //   Fins     : sy+6  … sy+12  ( 6 px, extend to 14 px wide)
-      //   Flame    : sy+12 … sy+18  ( 6 px, 10 px wide — matches body)
+      // Rotation angle: derive from velocity so it always matches actual travel direction.
+      // math.atan2(vy, vx) gives the heading angle; +PI/2 rotates the upward-facing
+      // sprite so its tip points in the direction of travel.
+      const renderAngle = Math.atan2(m.velocityY, m.velocityX);
 
-      // Engine glow / exhaust flame — widest element, drawn first so body
-      // layers paint over any overlap at the seam
-      ctx.fillStyle = '#ff8c00';                          // amber outer flame
-      ctx.fillRect(sx - 5, sy + 12, 10, 6);              // outer flame  (10×6 px)
-      ctx.fillStyle = '#ffff00';                          // bright yellow centre
-      ctx.fillRect(sx - 4, sy + 13,  8, 4);              // inner flame  (8×4 px)
-      ctx.fillStyle = '#ffffff';                          // white-hot core
-      ctx.fillRect(sx - 2, sy + 14,  4, 2);              // core          (4×2 px)
+      // Proximity glow: distance from missile to player drives warhead pulse intensity.
+      // Fully dim at ≥350 px; fully bright at 0 px (direct intercept).
+      const pdx       = m.worldX - this._lastPlayerWorldX;
+      const pdy       = m.y      - this._lastPlayerY;
+      const dist      = Math.sqrt(pdx * pdx + pdy * pdy);
+      const closeGlow = Math.max(0, 1.0 - dist / 350);
+      const warpulse  = closeGlow * (0.5 + 0.5 * Math.abs(Math.sin(m.age * Math.PI * 4)));
 
-      // Stabilizer fins — dark metal flanges bracketing the tail
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(renderAngle + Math.PI / 2);
+
+      // ---- Engine glow / exhaust flame — drawn first; body paints over seam ----
+      // Flame is at the tail (+y, opposite the tip) regardless of rotation.
+      ctx.fillStyle = '#ff8c00';
+      ctx.fillRect(-5,  12, 10, 6);   // outer amber flame (10×6 px)
+      ctx.fillStyle = '#ffff00';
+      ctx.fillRect(-4,  13,  8, 4);   // inner yellow flame (8×4 px)
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-2,  14,  4, 2);   // white-hot core (4×2 px)
+
+      // ---- Stabilizer fins — dark metal flanges bracketing the tail ----
       ctx.fillStyle = '#383028';
-      ctx.fillRect(sx - 7, sy +  6, 2, 6);   // left fin  (2×6 px)
-      ctx.fillRect(sx + 5, sy +  6, 2, 6);   // right fin (2×6 px)
+      ctx.fillRect(-7,  6, 2, 6);     // left fin  (2×6 px)
+      ctx.fillRect( 5,  6, 2, 6);     // right fin (2×6 px)
 
-      // Fuselage — dark metal body with panel seam and left-edge highlight
+      // ---- Fuselage — dark metal body with panel seam and depth highlight ----
       ctx.fillStyle = '#4a4038';
-      ctx.fillRect(sx - 5, sy - 6, 10, 18); // main body  (10×18 px)
-      ctx.fillStyle = '#2e2820';             // horizontal panel seam (near mid-body)
-      ctx.fillRect(sx - 5, sy + 3, 10,  1);
-      ctx.fillStyle = '#6a6050';             // left-edge highlight (depth)
-      ctx.fillRect(sx - 5, sy - 6,  1, 18);
+      ctx.fillRect(-5, -6, 10, 18);   // main body (10×18 px)
+      ctx.fillStyle = '#2e2820';
+      ctx.fillRect(-5,  3, 10,  1);   // horizontal panel seam (near mid-body)
+      ctx.fillStyle = '#6a6050';
+      ctx.fillRect(-5, -6,  1, 18);   // left-edge highlight (depth)
 
-      // Voidheart side-glow flanges — sit between fuselage and warhead edges,
-      // giving the wider warhead a visible bracket at the fuselage transition
+      // ---- Voidheart side-glow flanges — fuselage-to-warhead bracket ----
       ctx.fillStyle = '#440030';
-      ctx.fillRect(sx - 7, sy - 8, 2, 5);   // left flange  (2×5 px)
-      ctx.fillRect(sx + 5, sy - 8, 2, 5);   // right flange (2×5 px)
+      ctx.fillRect(-7, -8, 2, 5);     // left flange  (2×5 px)
+      ctx.fillRect( 5, -8, 2, 5);     // right flange (2×5 px)
 
-      // Warhead — Voidheart-ore explosive tip (14×12 px)
+      // ---- Warhead — Voidheart-ore explosive tip (14×12 px total) ----
       ctx.fillStyle = '#880050';
-      ctx.fillRect(sx - 7, sy - 13, 14, 7); // warhead body    (14×7 px)
+      ctx.fillRect(-7, -13, 14, 7);   // warhead body    (14×7 px)
       ctx.fillStyle = '#aa0060';
-      ctx.fillRect(sx - 4, sy - 17,  8, 4); // narrowing nose  (8×4 px)
+      ctx.fillRect(-4, -17,  8, 4);   // narrowing nose  (8×4 px)
       ctx.fillStyle = '#cc20a0';
-      ctx.fillRect(sx - 1, sy - 18,  2, 1); // tip             (2×1 px)
+      ctx.fillRect(-1, -18,  2, 1);   // tip             (2×1 px)
+
+      // ---- Proximity glow overlay — warhead brightens as missile closes in ----
+      if (warpulse > 0.05) {
+        ctx.globalAlpha = warpulse * 0.65;
+        ctx.fillStyle   = '#ff80cc';
+        ctx.fillRect(-7, -18, 14, 13); // covers warhead + nose area
+        ctx.globalAlpha = 1.0;
+      }
+
+      // ---- Hit flash — 2-frame white fill over entire sprite ----
+      if (m.hitFlashTimer > 0) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(-7, -18, 14, 36); // full sprite bounds: tip to flame bottom
+      }
+
+      ctx.restore();
+    });
+
+    // ---- Mid-air missile explosions (shot down by player) ----
+    // Rendered in screen-space after all missile sprites so they draw on top.
+    this._midairExplosions.forEach(ex => {
+      const esx   = Math.round(ex.worldX - cameraX);
+      const alpha = ex.timer < 0.3 ? 1.0 : Math.max(0, 1.0 - (ex.timer - 0.3) / 0.3);
+      ctx.globalAlpha = alpha;
+
+      // Frame 1: bright white flash at the kill point (first 2 render frames)
+      if (ex.timer < 2 / 60) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(esx - 12, Math.round(ex.y) - 12, 24, 24);
+      }
+
+      // Voidheart burst fragments
+      ex.fragments.forEach(f => {
+        ctx.fillStyle = f.color;
+        ctx.fillRect(Math.round(esx + f.x), Math.round(ex.y + f.y), f.w, f.h);
+      });
+
+      // White/yellow sparks
+      ex.sparks.forEach(s => {
+        ctx.fillStyle = s.color;
+        ctx.fillRect(Math.round(esx + s.x), Math.round(ex.y + s.y), 1, 1);
+      });
+
+      ctx.globalAlpha = 1.0;
     });
   }
 }

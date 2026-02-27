@@ -362,7 +362,7 @@ class PilotGameState {
       }
     });
 
-    // ---- Player bolt → any ground enemy (AABB, unified) ----
+    // ---- Player bolt → any ground enemy structure (AABB, unified) ----
     // getStructureHitbox() is defined on all ground entity types.
     // Coordinate spaces: hb.x/w → world-space; hb.y/h → screen-space.
     // 1 damage per bolt; bolt consumed on contact.
@@ -377,6 +377,19 @@ class PilotGameState {
           p.deactivate();
         }
       });
+    });
+
+    // ---- Player bolt → active OrcSilo missile (shootdown) ----
+    // Missile hitbox: 10×21 px centred on missile world position.
+    // 6 hits destroy the missile mid-air (triggers a small explosion).
+    // Each hit triggers a 2-frame white flash on the missile sprite.
+    // The check is delegated to OrcSilo so it can manage missile health
+    // and spawn the mid-air explosion without exposing internal state.
+    this._enemies.forEach(enemy => {
+      if (!enemy.isAlive()) return;
+      if (typeof enemy.checkProjectilesHitMissiles === 'function') {
+        enemy.checkProjectilesHitMissiles(this._projectilePool);
+      }
     });
 
     // ---- Button placeholders ----
