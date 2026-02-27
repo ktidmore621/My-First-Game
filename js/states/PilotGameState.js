@@ -113,14 +113,15 @@ class PilotGameState {
     // Pre-build the ground detail array once so we don't allocate each frame.
     this._groundFeatures = _buildGroundFeatures();
 
-    // ---- Placeholder enemy world positions ----
-    // Markers placed at fixed world-space X coordinates across the battlefield.
-    // Each is drawn at (worldX − _cameraX) so it scrolls with the ground.
-    // Replace with real entity classes when enemy logic is implemented.
-    this._enemyPlaceholders = [
-      { worldX: 1200, screenY: this._H * 0.72 - 18, label: '▲ AA Gun'  },
-      { worldX: 2400, screenY: this._H * 0.72 - 18, label: '▲ Missile' },
-      { worldX: 3600, screenY: this._H * 0.72 - 22, label: '▲ Base'    },
+    // ---- OrcCannon ground emplacements ----
+    // Three anti-aircraft cannons placed at fixed world-space X positions.
+    // Each instance carries its own HealthSystem (3 HP) and renders its own
+    // damage states and collapse animation. screenX is derived from worldX
+    // minus _cameraX inside OrcCannon.render() each frame.
+    this._orcCannons = [
+      new OrcCannon(1200),
+      new OrcCannon(2400),
+      new OrcCannon(3600),
     ];
 
     // Register death callback
@@ -307,14 +308,9 @@ class PilotGameState {
     // battlefield boundary — signals the hard wall before they hit it
     this._drawBoundaryIndicator(ctx, W, H);
 
-    // Placeholder enemy markers at their world-space positions.
-    // screenX = worldX − _cameraX. Skip markers that are off-screen.
-    this._enemyPlaceholders.forEach(e => {
-      const screenX = e.worldX - this._cameraX;
-      if (screenX > -40 && screenX < W + 40) {
-        _drawPlaceholderEnemy(ctx, screenX, e.screenY, e.label);
-      }
-    });
+    // OrcCannon emplacements — each renders itself at its world-space position.
+    // Culling and screenX conversion are handled inside OrcCannon.render().
+    this._orcCannons.forEach(cannon => cannon.render(ctx, this._cameraX));
 
     // Aim indicator line from the plane nose (right-stick active only)
     if (this._input.rightStick.active) {
