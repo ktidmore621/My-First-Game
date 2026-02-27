@@ -165,6 +165,29 @@ class OrcSilo {
     // Each entry: { worldX, y, timer, fragments[], sparks[] }
     this._midairExplosions = [];
 
+    // ---- Launch smoke — spawned when a missile fires, rises over 2 s ----
+    // Each puff: { wx (world-space X), y (screen-space), w, h, vx, vy, age, color }
+    this._launchSmoke = [];
+
+    // ---- Impact explosion pool — 3 pre-allocated slots, reused on each hit ----
+    // Triggered when a missile reaches the player.
+    // Each slot: { active, worldX, y, timer, fragments[], sparks[], smoke[] }
+    this._impactExplosions = Array.from({ length: 3 }, () => ({
+      active: false, worldX: 0, y: 0, timer: 0,
+      // 8 Voidheart burst fragments (Frame 2)
+      fragments: Array.from({ length: 8 }, () => ({
+        x: 0, y: 0, vx: 0, vy: 0, w: 3, h: 3, color: '#aa0060',
+      })),
+      // 4 gold spark pixels (Frame 3)
+      sparks: Array.from({ length: 4 }, () => ({
+        x: 0, y: 0, vx: 0, vy: 0, color: '#ffd700',
+      })),
+      // 4 dark purple smoke puffs (Frame 4)
+      smoke: Array.from({ length: 4 }, () => ({
+        x: 0, y: 0, vx: 0, vy: 0, w: 10, h: 10, color: '#2a0040',
+      })),
+    }));
+
     // ---- Damage-state rendering flags ----
     this._crackLeft      = false; // zigzag on rim left section after hit 2
     this._scorchVisible  = false; // scorch marks on collar after hit 4
@@ -221,6 +244,8 @@ class OrcSilo {
 
     // Always update mid-air explosions, even while the silo is dying
     this._updateMidairExplosions(dt);
+    this._updateLaunchSmoke(dt);
+    this._updateImpactExplosions(dt);
 
     if (this._dying) {
       this._updateExplosion(dt);
@@ -413,6 +438,9 @@ class OrcSilo {
     // Missiles render in screen space — after ctx.restore() so they
     // are not affected by the per-structure translate
     this._renderMissiles(ctx, cameraX);
+    // Launch smoke and impact explosions are world-space effects rendered after missiles
+    this._renderLaunchSmoke(ctx, cameraX);
+    this._renderImpactExplosions(ctx, cameraX);
   }
 
   // ================================================================
@@ -448,6 +476,7 @@ class OrcSilo {
       const my = m.y      - MISSILE_DAMAGE_HITBOX_H / 2;
       if (mx < px + hitW && mx + MISSILE_DAMAGE_HITBOX_W > px &&
           my < py + hitH && my + MISSILE_DAMAGE_HITBOX_H > py) {
+        this._spawnImpactExplosion(m.worldX, m.y); // impact visual at missile position
         m.active = false; // missile consumed on impact
         return true;
       }
@@ -516,6 +545,9 @@ class OrcSilo {
     m.velocityY     = -MISSILE_SPEED;
     m.hits          = 0;
     m.hitFlashTimer = 0;
+
+    // Spawn rising smoke column at the silo opening
+    this._spawnLaunchSmoke();
   }
 
   // ================================================================
@@ -649,6 +681,203 @@ class OrcSilo {
         { x: 0, y: 0, vx:  -50, vy: -270, color: '#ffffff' },
         { x: 0, y: 0, vx:   70, vy: -260, color: '#ffff44' },
       ],
+    });
+  }
+
+  // ================================================================
+  // PRIVATE — LAUNCH SMOKE
+  // ================================================================
+
+  // Spawns 6 smoke puffs at the silo opening each time a missile fires.
+  // Puffs rise slowly and drift left/right, fading over 2 s.
+  // Stored in world-space so they stay fixed as the camera scrolls.
+  _spawnLaunchSmoke() {
+    const ox = this.worldX;            // silo centre (world-space)
+    const oy = this._groundY - 28;    // screen-space Y of the silo opening
+
+    // 6 puffs — varied sizes (8–16 px), drift (-8…+8 px/s), rise (-18…-32 px/s)
+    this._launchSmoke.push(
+      { wx: ox -  8, y: oy,     w: 14, h: 14, vx: -6, vy: -24, color: '#4a4a4a', age: 0 },
+      { wx: ox +  6, y: oy,     w: 16, h: 10, vx:  7, vy: -20, color: '#cccccc', age: 0 },
+      { wx: ox -  2, y: oy,     w:  8, h:  8, vx:  3, vy: -32, color: '#555555', age: 0 },
+      { wx: ox + 12, y: oy - 4, w: 12, h: 12, vx: -8, vy: -18, color: '#aaaaaa', age: 0 },
+      { wx: ox - 14, y: oy - 2, w: 10, h: 10, vx:  5, vy: -26, color: '#333333', age: 0 },
+      { wx: ox +  2, y: oy,     w: 16, h:  8, vx: -2, vy: -22, color: '#888888', age: 0 },
+    );
+  }
+
+  // Advances launch smoke particles; removes those older than 2 s.
+  _updateLaunchSmoke(dt) {
+    this._launchSmoke.forEach(p => {
+      p.age += dt;
+      p.wx  += p.vx * dt;
+      p.y   += p.vy * dt;
+    });
+    this._launchSmoke = this._launchSmoke.filter(p => p.age < 2.0);
+  }
+
+  // Renders launch smoke puffs in world-space (screen X = wx - cameraX).
+  // Quadratic alpha fade so puffs tail off gently.
+  _renderLaunchSmoke(ctx, cameraX) {
+    if (this._launchSmoke.length === 0) return;
+    this._launchSmoke.forEach(p => {
+      const alpha = Math.max(0, 1.0 - p.age / 2.0);
+      ctx.globalAlpha = alpha * alpha;   // quadratic fade
+      ctx.fillStyle   = p.color;
+      const sx = Math.round(p.wx - cameraX) - Math.round(p.w / 2);
+      const sy = Math.round(p.y)            - Math.round(p.h / 2);
+      ctx.fillRect(sx, sy, p.w, p.h);
+    });
+    ctx.globalAlpha = 1.0;
+  }
+
+  // ================================================================
+  // PRIVATE — MISSILE IMPACT EXPLOSION
+  // ================================================================
+
+  // Activates the next free slot in the pre-allocated pool of 3.
+  // Resets all particle positions and velocities from hardcoded config.
+  // Called from checkMissilesHitPlayer when a missile reaches the player.
+  _spawnImpactExplosion(worldX, y) {
+    const slot = this._impactExplosions.find(e => !e.active);
+    if (!slot) return;   // pool exhausted — effect dropped silently
+
+    slot.active = true;
+    slot.worldX = worldX;
+    slot.y      = y;
+    slot.timer  = 0;
+
+    // ---- Frame 2: 8 purplish-red and pink Voidheart fragments ----
+    // Radiating outward at 120–200 px/s; sizes 3×3 to 5×5 px.
+    const fragCfg = [
+      { a: 0,                 spd: 160, w: 3, h: 3, c: '#aa0060' },
+      { a: Math.PI / 4,       spd: 180, w: 4, h: 4, c: '#ff40cc' },
+      { a: Math.PI / 2,       spd: 140, w: 3, h: 3, c: '#880050' },
+      { a: 3 * Math.PI / 4,   spd: 200, w: 5, h: 5, c: '#cc20a0' },
+      { a: Math.PI,           spd: 150, w: 4, h: 4, c: '#660040' },
+      { a: 5 * Math.PI / 4,   spd: 190, w: 3, h: 3, c: '#ff60d0' },
+      { a: 3 * Math.PI / 2,   spd: 130, w: 5, h: 5, c: '#7a0050' },
+      { a: 7 * Math.PI / 4,   spd: 170, w: 4, h: 4, c: '#dd30b0' },
+    ];
+    slot.fragments.forEach((f, i) => {
+      const c = fragCfg[i];
+      f.x = 0;  f.y = 0;
+      f.vx = Math.cos(c.a) * c.spd;
+      f.vy = Math.sin(c.a) * c.spd;
+      f.w  = c.w;  f.h = c.h;
+      f.color = c.c;
+    });
+
+    // ---- Frame 3: 4 gold spark pixels scattering wider ----
+    const sparkCfg = [
+      { a: Math.PI * 0.15, spd: 250 },
+      { a: Math.PI * 0.65, spd: 280 },
+      { a: Math.PI * 1.15, spd: 260 },
+      { a: Math.PI * 1.65, spd: 270 },
+    ];
+    slot.sparks.forEach((s, i) => {
+      const c = sparkCfg[i];
+      s.x = 0;  s.y = 0;
+      s.vx = Math.cos(c.a) * c.spd;
+      s.vy = Math.sin(c.a) * c.spd;
+      s.color = '#ffd700';
+    });
+
+    // ---- Frame 4: 4 dark purple smoke puffs rising upward ----
+    const smokeCfg = [
+      { ox: -8, oy: -4, vx: -3, vy: -28, w: 12, h: 10, c: '#2a0040' },
+      { ox:  6, oy: -2, vx:  4, vy: -24, w: 10, h: 12, c: '#441060' },
+      { ox: -2, oy: -8, vx: -2, vy: -32, w: 14, h:  8, c: '#1a0030' },
+      { ox: 10, oy: -6, vx:  3, vy: -20, w: 10, h: 10, c: '#380850' },
+    ];
+    slot.smoke.forEach((s, i) => {
+      const c = smokeCfg[i];
+      s.x = c.ox;  s.y = c.oy;
+      s.vx = c.vx; s.vy = c.vy;
+      s.w  = c.w;  s.h = c.h;
+      s.color = c.c;
+    });
+  }
+
+  // Advances all active impact explosions; deactivates those past 1.5 s.
+  _updateImpactExplosions(dt) {
+    this._impactExplosions.forEach(ex => {
+      if (!ex.active) return;
+      ex.timer += dt;
+
+      ex.fragments.forEach(f => {
+        f.x  += f.vx * dt;
+        f.y  += f.vy * dt;
+        f.vy += 80 * dt;   // gentle gravity
+      });
+      ex.sparks.forEach(s => {
+        s.x  += s.vx * dt;
+        s.y  += s.vy * dt;
+        s.vy += 50 * dt;   // lighter drift
+      });
+      ex.smoke.forEach(s => {
+        s.x += s.vx * dt;
+        s.y += s.vy * dt;  // rises only — no gravity
+      });
+
+      if (ex.timer >= 1.5) ex.active = false;
+    });
+  }
+
+  // Renders active impact explosions in world-space.
+  // Explosion stays fixed at the impact point even as the camera moves.
+  //
+  // Frame 1 (0 – 2/60 s) : 40×40 bright white flash
+  // Frame 2 (0 – 0.40 s) : 8 Voidheart burst fragments
+  // Frame 3 (0.05 – 0.6 s): 4 gold spark pixels
+  // Frame 4 (0.10 – 1.1 s): 4 dark-purple smoke puffs
+  _renderImpactExplosions(ctx, cameraX) {
+    this._impactExplosions.forEach(ex => {
+      if (!ex.active) return;
+
+      const sx = Math.round(ex.worldX - cameraX);
+      const sy = Math.round(ex.y);
+      const t  = ex.timer;
+
+      // ---- Frame 1: 40×40 bright white flash — 2 render frames ----
+      if (t < 2 / 60) {
+        ctx.globalAlpha = 1.0;
+        ctx.fillStyle   = '#ffffff';
+        ctx.fillRect(sx - 20, sy - 20, 40, 40);
+      }
+
+      // ---- Frame 2: Voidheart burst fragments (0 → 0.40 s) ----
+      if (t < 0.4) {
+        const burstAlpha = t < 0.2 ? 1.0 : Math.max(0, 1.0 - (t - 0.2) / 0.2);
+        ctx.globalAlpha  = burstAlpha;
+        ex.fragments.forEach(f => {
+          ctx.fillStyle = f.color;
+          ctx.fillRect(Math.round(sx + f.x), Math.round(sy + f.y), f.w, f.h);
+        });
+      }
+
+      // ---- Frame 3: gold sparks scattering wider (0.05 → 0.60 s) ----
+      if (t >= 0.05 && t < 0.6) {
+        const sparkAge   = t - 0.05;
+        const sparkAlpha = sparkAge < 0.3 ? 1.0 : Math.max(0, 1.0 - (sparkAge - 0.3) / 0.25);
+        ctx.globalAlpha  = sparkAlpha;
+        ex.sparks.forEach(s => {
+          ctx.fillStyle = s.color;
+          ctx.fillRect(Math.round(sx + s.x), Math.round(sy + s.y), 1, 1);
+        });
+      }
+
+      // ---- Frame 4: dark-purple smoke puffs rising (0.10 → 1.10 s) ----
+      if (t >= 0.1 && t < 1.1) {
+        const smokeAlpha = Math.max(0, 1.0 - (t - 0.1) / 1.0);
+        ctx.globalAlpha  = smokeAlpha;
+        ex.smoke.forEach(s => {
+          ctx.fillStyle = s.color;
+          ctx.fillRect(Math.round(sx + s.x), Math.round(sy + s.y), s.w, s.h);
+        });
+      }
+
+      ctx.globalAlpha = 1.0;
     });
   }
 
@@ -1066,6 +1295,23 @@ class OrcSilo {
       ctx.fillStyle = `rgb(${Math.round(ag * 0.6)},0,${Math.round(ab * 0.6)})`;
       ctx.fillRect(-20, -11, 40, 1);   // faint upper edge of glow
 
+      // ---- Silo opening smoke — propellant igniting underground ----
+      // Small dark puffs inside the shaft visible while hatch is open.
+      // Fade in once the doors have moved far enough to be plausible.
+      if (slideAmt > 28) {
+        const puffIntensity = Math.min(1.0, (slideAmt - 28) / 24);
+        const flicker       = 0.6 + 0.4 * Math.abs(Math.sin(this._pulseT * 6.7));
+        ctx.globalAlpha = tubeAlpha * puffIntensity * flicker * 0.55;
+        ctx.fillStyle = '#2a1838';
+        ctx.fillRect(-22, -24, 12, 7);   // left-inner puff
+        ctx.fillRect(  8, -26, 10, 5);   // right-upper puff
+        ctx.fillStyle = '#1a1028';
+        ctx.fillRect( -8, -22, 16, 6);   // centre-low puff
+        ctx.fillStyle = '#382848';
+        ctx.fillRect(-16, -28,  9, 4);   // near-top left wisp
+        ctx.globalAlpha = tubeAlpha;     // restore for subsequent draws
+      }
+
       // ---- Missile nose emerging from shaft when hatch near fully open ----
       if (hatchOpen > 0.80) {
         const noseAlpha = Math.min(1.0, (hatchOpen - 0.80) / 0.20) * tubeAlpha;
@@ -1073,6 +1319,35 @@ class OrcSilo {
         // Rise 0 → 14 px as hatch opens fully; noseY tracks the warhead base
         const rise = Math.round((hatchOpen - 0.80) / 0.20 * 14);
         const noseY = -8 - rise;       // starts near shaft floor, rises
+
+        // ---- Thrust flame — 3-frame animated beneath the rising missile ----
+        // Drawn before the warhead so the missile body paints over the flame base.
+        // 14 px wide matching the warhead; flame sits just below the warhead bottom
+        // at noseY+7, clamped so it stays inside the visible shaft (y ≥ −28).
+        const flameBaseY  = Math.max(-26, noseY + 7);
+        const thrustFrame = Math.floor(this._pulseT * 60) % 3;
+        if (thrustFrame === 0) {
+          ctx.fillStyle = '#ff8c00';
+          ctx.fillRect(-7, flameBaseY,     14, 5);  // orange outer (14×5 px)
+          ctx.fillStyle = '#ffff00';
+          ctx.fillRect(-5, flameBaseY + 1, 10, 3);  // yellow mid  (10×3 px)
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(-2, flameBaseY + 2,  4, 2);  // white core   (4×2 px)
+        } else if (thrustFrame === 1) {
+          ctx.fillStyle = '#ffff00';
+          ctx.fillRect(-7, flameBaseY,     14, 5);  // yellow outer
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(-5, flameBaseY + 1, 10, 3);  // white mid
+          ctx.fillStyle = '#ff8c00';
+          ctx.fillRect(-2, flameBaseY + 2,  4, 2);  // orange core
+        } else {
+          ctx.fillStyle = '#ff8c00';
+          ctx.fillRect(-7, flameBaseY,     14, 5);  // orange outer
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(-5, flameBaseY + 1, 10, 3);  // white mid
+          ctx.fillStyle = '#ffff44';
+          ctx.fillRect(-2, flameBaseY + 2,  4, 2);  // bright-yellow core
+        }
 
         // Voidheart warhead (14×12 px matching the in-flight missile)
         ctx.fillStyle = '#880050';
