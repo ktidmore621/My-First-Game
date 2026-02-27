@@ -185,7 +185,7 @@ class OrcCannon {
         if (this._windupTimer >= 0.75) {
           this._fireBolt(playerWorldX, playerY);
           this._state        = 'firing';
-          this._fireCooldown = 1.5;
+          this._fireCooldown = 4.0; // Fire rate — reduce for higher difficulty levels
         }
         break;
 
@@ -200,7 +200,7 @@ class OrcCannon {
         this._fireCooldown -= dt;
         if (this._fireCooldown <= 0) {
           this._fireBolt(playerWorldX, playerY);
-          this._fireCooldown = 1.5;
+          this._fireCooldown = 4.0;
         }
         break;
 
