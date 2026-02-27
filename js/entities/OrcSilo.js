@@ -34,6 +34,19 @@
    Armored rim    : 120 × 22 px (y = −28 … −6)
    Total above ground: 28 px
 
+   Hatch doors    : two 58 × 20 px armored panels (Session 2)
+                    Left: x = −58 … 0, Right: x = 0 … +58
+                    Flush on rim top (y = −28 … −8); slide apart
+                    on opening. Each panel: concrete outer skin,
+                    3 steel reinforcement strips, 4 bolt rings,
+                    hydraulic arm mounts, center-seam warning stripes.
+
+   Perimeter fence: 280 px wide (x = −140 … +140)
+                    4 concrete posts at x = −140, −68, +68, +140
+                    Two fence sections: −140 to −68, +68 to +140
+                    Upper/lower rails, 6 px-spaced pickets, razor wire.
+                    Warning beacons: one per post (gold slow / red fast).
+
    ----------------------------------------------------------------
    HEALTH & DAMAGE STATES
    ----------------------------------------------------------------
@@ -50,16 +63,23 @@
    ----------------------------------------------------------------
    States: 'idle' → 'windup' → 'firing' (looping) → 'dead'
 
-   idle    The silo is dormant. Conduit glow dim.
+   idle    The silo is dormant. Conduit glow dim. Warning beacons
+           blink slow gold (~1.2 Hz).
            Transition: player enters 500 px horizontal range.
 
-   windup  Hatch slides open over 1.5 s. Conduit cells pulse
-           violently between deep purplish-red and white-pink.
-           If player leaves range before 1.5 s: back to idle,
+   windup  Hatch slides open over 2.5 s with quadratic ease-in
+           (starts almost imperceptible, accelerates — mechanical
+           weight). Conduit cells pulse violently.
+           At 0.5 s  : steam/hydraulic vapor burst at centre seam.
+           At ~1.0 s : silo shaft interior becomes visible.
+           At 2.5 s  : doors fully open, missile nose rises; first
+                       missile fired → firing state.
+           Warning beacons switch to rapid red blink (~6 Hz).
+           If player leaves range before 2.5 s: back to idle,
            hatch closes.
-           After 1.5 s: fire first missile → firing state.
 
    firing  Silo fires one missile every 2.5 seconds.
+           Warning beacons remain rapid red.
            If player leaves range: back to idle, hatch closes.
 
    dead    Death animation running. Missiles in flight continue
@@ -97,8 +117,18 @@ class OrcSilo {
     this._pulseT       = 0;       // ever-incrementing time for glow oscillation
 
     // Hatch open amount: 0 = fully closed, 1 = fully open.
-    // Updated each frame based on current state.
+    // Updated each frame based on current state (eased over 2.5 s).
     this._hatchOpen = 0;
+
+    // ---- Steam burst (fires once at 0.5 s into windup) ----
+    // Each particle: { x, y, vx, vy, age }; cleared after 0.3 s.
+    this._steamFired     = false;
+    this._steamParticles = [];
+    this._steamTimer     = 0;
+
+    // ---- Warning light independent blink phases (4 corner posts) ----
+    // Staggered offsets so the four lights never all blink simultaneously.
+    this._lightPhases = [0.0, 1.4, 2.8, 4.2];
 
     // ---- Outgoing missiles — pool of 6 in-flight ----
     // Each slot: { active, worldX, y, originY, velocityX, velocityY }
@@ -175,14 +205,39 @@ class OrcSilo {
     const inRange = Math.abs(playerWorldX - this.worldX) <= 500;
 
     // ---- Hatch animation ----
-    // Closes gradually in idle (at 2 units/s), tracks wind-up progress,
-    // stays fully open during firing.
+    // Closes gradually in idle (at 2 units/s), tracks wind-up progress
+    // with a quadratic ease-in over 2.5 s (starts near-imperceptibly slow,
+    // accelerates — suggests enormous mechanical weight).
+    // Stays fully open during firing.
     if (this._state === 'idle') {
       this._hatchOpen = Math.max(0, this._hatchOpen - dt * 2);
     } else if (this._state === 'windup') {
-      this._hatchOpen = Math.min(1.0, this._windupTimer / 1.5);
+      const p = Math.min(1.0, this._windupTimer / 2.5);
+      this._hatchOpen = p * p; // quadratic ease-in
     } else if (this._state === 'firing') {
       this._hatchOpen = 1.0;
+    }
+
+    // ---- Steam burst — fires once at 0.5 s into windup ----
+    if (this._state === 'windup' && this._windupTimer >= 0.5 && !this._steamFired) {
+      this._steamFired   = true;
+      this._steamTimer   = 0;
+      // 4 bright white 1 px particles scattered at the center seam
+      this._steamParticles = [
+        { x:  -3, y: -28, vx:  -22, vy: -55, age: 0 },
+        { x:   0, y: -28, vx:   18, vy: -60, age: 0 },
+        { x:   3, y: -28, vx:   -8, vy: -48, age: 0 },
+        { x:  -1, y: -28, vx:   28, vy: -52, age: 0 },
+      ];
+    }
+    if (this._steamParticles.length > 0) {
+      this._steamTimer += dt;
+      this._steamParticles.forEach(p => {
+        p.age += dt;
+        p.x   += p.vx * dt;
+        p.y   += p.vy * dt;
+      });
+      if (this._steamTimer > 0.28) this._steamParticles = [];
     }
 
     // ================================================================
@@ -192,19 +247,23 @@ class OrcSilo {
 
       case 'idle':
         if (inRange) {
-          this._state       = 'windup';
-          this._windupTimer = 0;
+          this._state          = 'windup';
+          this._windupTimer    = 0;
+          this._steamFired     = false;   // reset steam so it fires on next windup
+          this._steamParticles = [];
         }
         break;
 
       case 'windup':
         if (!inRange) {
-          this._state       = 'idle';
-          this._windupTimer = 0;
+          this._state          = 'idle';
+          this._windupTimer    = 0;
+          this._steamFired     = false;
+          this._steamParticles = [];
           break;
         }
         this._windupTimer += dt;
-        if (this._windupTimer >= 1.5) {
+        if (this._windupTimer >= 2.5) {
           this._fireMissile(playerWorldX, playerY);
           this._state        = 'firing';
           this._fireCooldown = 2.5;
@@ -264,10 +323,12 @@ class OrcSilo {
       glow = 0.08 + 0.04 * Math.abs(Math.sin(this._pulseT * 0.5));
     }
 
+    this._renderPerimeterFence(ctx);
     this._renderPitCollar(ctx, glow);
     this._renderSiloBody(ctx, glow, this._hatchOpen);
     this._renderOrcOperators(ctx);
     this._renderDamageOverlays(ctx);
+    this._renderSteamBurst(ctx);
 
     ctx.restore();
 
@@ -732,135 +793,8 @@ class OrcSilo {
       ctx.fillRect(rx, -27, 1, 1);
     });
 
-    // ================================================================
-    // HATCH ANIMATION
-    // ================================================================
-    // Two armored panels, each 44 px wide, covering the central aperture
-    // (x = −44 to 0 for left, x = 0 to +44 for right), y = −27 to −8.
-    // During wind-up each half slides outward into the rim body structure.
-    // maxSlide = 44 px — when fully slid, panels disappear behind rim edge.
-    // ================================================================
-    const maxSlide = 44;
-    const slideAmt = Math.round(hatchOpen * maxSlide);
-
-    // ---- Missile tube interior — revealed as hatch opens ----
-    // Fades in once the panels have moved more than 2 px.
-    if (slideAmt > 2) {
-      const tubeAlpha = Math.min(1.0, (slideAmt - 2) / 16);
-      ctx.globalAlpha = tubeAlpha;
-      // Deep dark silo shaft interior
-      ctx.fillStyle = '#080606';
-      ctx.fillRect(-42, -27, 84, 19);
-      // Inner wall highlights — left/right wall faces suggesting tube depth
-      ctx.fillStyle = '#1a0e10';
-      ctx.fillRect(-42, -27,  3, 19);  // left inner wall
-      ctx.fillRect( 39, -27,  3, 19);  // right inner wall
-      ctx.fillRect(-42, -27, 84,  2);  // top lip of tube
-      // Voidheart energy glow rising from the ore reservoir far below
-      const tpr = Math.round(60 + glow * 100);
-      const tpb = Math.round(40 + glow *  80);
-      ctx.fillStyle = `rgb(${tpr},0,${tpb})`;
-      ctx.fillRect(-20, -10, 40, 2);   // glow band at tube floor
-      ctx.globalAlpha = 1.0;
-    }
-
-    // ---- Left hatch panel ----
-    if (slideAmt < maxSlide) {
-      const lx = -44 - slideAmt;  // slides further left as hatch opens
-
-      ctx.fillStyle = '#504848';  // armored panel body
-      ctx.fillRect(lx, -27, 44, 19);
-
-      // Horizontal panel seams
-      ctx.fillStyle = '#3c3630';
-      ctx.fillRect(lx, -23, 44, 1);
-      ctx.fillRect(lx, -18, 44, 1);
-      ctx.fillRect(lx, -14, 44, 1);
-
-      // Warning chevron — angled red / dark alternating stripes
-      for (let row = 0; row < 19; row++) {
-        const offset = Math.floor(row * 0.4);
-        ctx.fillStyle = '#aa2000';
-        ctx.fillRect(lx + 14 + offset, -27 + row, 5, 1);  // red stripe
-        ctx.fillStyle = '#181410';
-        ctx.fillRect(lx + 20 + offset, -27 + row, 4, 1);  // dark band
-      }
-
-      // Top edge highlight
-      ctx.fillStyle = '#7a7060';
-      ctx.fillRect(lx, -27, 44, 1);
-
-      // Closing edge (right side — seals at centre when fully closed)
-      ctx.fillStyle = '#282018';
-      ctx.fillRect(lx + 42, -27,  2, 19);  // dark edge strip
-      ctx.fillStyle = '#504840';
-      ctx.fillRect(lx + 42, -27,  1, 19);  // bright sealing gasket
-
-      // Rivet details
-      ctx.fillStyle = '#8a8070';
-      ctx.fillRect(lx +  2, -26, 1, 1);
-      ctx.fillRect(lx + 10, -26, 1, 1);
-      ctx.fillRect(lx + 22, -26, 1, 1);
-      ctx.fillRect(lx + 34, -26, 1, 1);
-      ctx.fillStyle = '#181610';
-      ctx.fillRect(lx +  2, -25, 1, 1);
-      ctx.fillRect(lx + 10, -25, 1, 1);
-      ctx.fillRect(lx + 22, -25, 1, 1);
-      ctx.fillRect(lx + 34, -25, 1, 1);
-    }
-
-    // ---- Right hatch panel ----
-    if (slideAmt < maxSlide) {
-      const rx = slideAmt;  // starts at 0, slides right as hatch opens
-
-      ctx.fillStyle = '#504848';
-      ctx.fillRect(rx, -27, 44, 19);
-
-      ctx.fillStyle = '#3c3630';
-      ctx.fillRect(rx, -23, 44, 1);
-      ctx.fillRect(rx, -18, 44, 1);
-      ctx.fillRect(rx, -14, 44, 1);
-
-      for (let row = 0; row < 19; row++) {
-        const offset = Math.floor(row * 0.4);
-        ctx.fillStyle = '#aa2000';
-        ctx.fillRect(rx + 10 + offset, -27 + row, 5, 1);
-        ctx.fillStyle = '#181410';
-        ctx.fillRect(rx + 16 + offset, -27 + row, 4, 1);
-      }
-
-      ctx.fillStyle = '#7a7060';
-      ctx.fillRect(rx, -27, 44, 1);
-
-      // Closing edge (left side — meets left panel at centre)
-      ctx.fillStyle = '#282018';
-      ctx.fillRect(rx, -27,  2, 19);
-      ctx.fillStyle = '#504840';
-      ctx.fillRect(rx + 1, -27,  1, 19);
-
-      ctx.fillStyle = '#8a8070';
-      ctx.fillRect(rx +  8, -26, 1, 1);
-      ctx.fillRect(rx + 20, -26, 1, 1);
-      ctx.fillRect(rx + 32, -26, 1, 1);
-      ctx.fillRect(rx + 42, -26, 1, 1);
-      ctx.fillStyle = '#181610';
-      ctx.fillRect(rx +  8, -25, 1, 1);
-      ctx.fillRect(rx + 20, -25, 1, 1);
-      ctx.fillRect(rx + 32, -25, 1, 1);
-      ctx.fillRect(rx + 42, -25, 1, 1);
-    }
-
-    // ---- Centre lock mechanism — visible only when hatch is fully closed ----
-    if (slideAmt < 4) {
-      ctx.globalAlpha = 1.0 - slideAmt / 4;
-      ctx.fillStyle = '#4a4440';   // lock housing
-      ctx.fillRect(-4, -27, 8, 19);
-      ctx.fillStyle = '#8a7a60';   // lock plate face
-      ctx.fillRect(-3, -22, 6,  4);
-      ctx.fillStyle = '#c0a870';   // lock pin highlight
-      ctx.fillRect(-1, -21, 2,  2);
-      ctx.globalAlpha = 1.0;
-    }
+    // Hatch doors and tube interior are now rendered by _renderHatch()
+    this._renderHatch(ctx, glow, hatchOpen);
 
     // ================================================================
     // VOIDHEART ORE POWER CELL — 10×9 px on the right outer panel face
@@ -922,6 +856,444 @@ class OrcSilo {
       ctx.fillStyle = '#ffffff';
       ctx.fillRect( 50, -26, 10,  9);
     }
+  }
+
+  // ----------------------------------------------------------------
+  // HATCH DOORS — new heavy armored design (Session 2)
+  // Two panels, each 58 × 20 px, sitting flush on top of the silo rim.
+  //   Left  panel: x = −58 … 0    (closed), slides left to x = −118 … −60
+  //   Right panel: x =   0 … +58  (closed), slides right to x = +60 … +118
+  // maxSlide = 60 — when fully slid the inner edge clears the rim (±60).
+  // Easing is applied by the caller via hatchOpen (quadratic ease-in).
+  // ----------------------------------------------------------------
+  _renderHatch(ctx, glow, hatchOpen) {
+    const maxSlide = 60;
+    const slideAmt = Math.round(hatchOpen * maxSlide);
+
+    // ================================================================
+    // TUBE INTERIOR — revealed as panels slide apart
+    // Visible once slideAmt > 4; alpha fades in over 14 px of travel.
+    // ================================================================
+    if (slideAmt > 4) {
+      const tubeAlpha = Math.min(1.0, (slideAmt - 4) / 14);
+      ctx.globalAlpha = tubeAlpha;
+
+      // Deep near-black shaft interior
+      ctx.fillStyle = '#060404';
+      ctx.fillRect(-52, -28, 104, 20);
+
+      // Inner wall faces — left and right shaft walls with slight depth
+      ctx.fillStyle = '#140a0c';
+      ctx.fillRect(-52, -28,  4, 20);  // left wall face
+      ctx.fillRect( 48, -28,  4, 20);  // right wall face
+      ctx.fillRect(-52, -28, 104,  2); // top lip of shaft
+
+      // Voidheart conduit glow lines running down the inner walls
+      const gr = Math.round(50 + glow * 90);
+      const gb = Math.round(30 + glow * 70);
+      ctx.fillStyle = `rgb(${gr},0,${gb})`;
+      ctx.fillRect(-50, -27, 1, 18);   // left conduit line
+      ctx.fillRect( 49, -27, 1, 18);   // right conduit line
+      ctx.fillStyle = `rgb(${Math.round(gr * 0.5)},0,${Math.round(gb * 0.5)})`;
+      ctx.fillRect(-49, -27, 1, 18);   // left secondary glow
+      ctx.fillRect( 48, -27, 1, 18);   // right secondary glow
+
+      // Ambient glow rising from the ore reservoir far below
+      const ag = Math.round(60 + glow * 110);
+      const ab = Math.round(40 + glow *  90);
+      ctx.fillStyle = `rgb(${ag},0,${ab})`;
+      ctx.fillRect(-30, -10, 60, 3);   // glow band — wide floor wash
+      ctx.fillStyle = `rgb(${Math.round(ag * 0.6)},0,${Math.round(ab * 0.6)})`;
+      ctx.fillRect(-20, -11, 40, 1);   // faint upper edge of glow
+
+      // ---- Missile nose emerging from shaft when hatch near fully open ----
+      if (hatchOpen > 0.80) {
+        const noseAlpha = Math.min(1.0, (hatchOpen - 0.80) / 0.20) * tubeAlpha;
+        ctx.globalAlpha = noseAlpha;
+        // How far the nose has risen: 0 = at shaft bottom, 10 = peeking above
+        const rise = Math.round((hatchOpen - 0.80) / 0.20 * 10);
+        const noseY = -8 - rise;       // starts near shaft floor, rises
+
+        // Voidheart warhead body
+        ctx.fillStyle = '#880050';
+        ctx.fillRect(-3, noseY,      6, 4);   // warhead lower body
+        ctx.fillStyle = '#aa0060';
+        ctx.fillRect(-2, noseY - 2,  4, 2);   // narrowing nose
+        ctx.fillStyle = '#cc20a0';
+        ctx.fillRect(-1, noseY - 3,  2, 1);   // single-pixel tip
+        // Side conduit flanges on warhead
+        ctx.fillStyle = '#440030';
+        ctx.fillRect(-4, noseY + 1,  1, 2);
+        ctx.fillRect( 3, noseY + 1,  1, 2);
+      }
+
+      ctx.globalAlpha = 1.0;
+    }
+
+    // ================================================================
+    // LEFT HATCH PANEL — 58 × 20 px, slides left as hatch opens
+    // x = lx … lx+58   where lx = −58 − slideAmt
+    // Panel is clipped out of view once its right edge passes x = −60.
+    // ================================================================
+    if (-58 - slideAmt + 58 > -62) {   // at least 2 px still on-screen
+      const lx = -58 - slideAmt;
+
+      // ---- Armored body layers ----
+      // Base dark steel
+      ctx.fillStyle = '#3a3630';
+      ctx.fillRect(lx, -28, 58, 20);
+
+      // Top face — concrete-like outer skin matching the collar
+      ctx.fillStyle = '#7a7464';
+      ctx.fillRect(lx, -28, 58, 4);
+      ctx.fillStyle = '#898078';   // top texture row (lighter)
+      ctx.fillRect(lx, -28, 58, 1);
+      ctx.fillStyle = '#6e6860';   // second row (darker)
+      ctx.fillRect(lx, -27, 58, 1);
+      ctx.fillStyle = '#848070';   // third row (mid)
+      ctx.fillRect(lx, -26, 58, 1);
+
+      // Heavy steel reinforcement strips (horizontal bands)
+      ctx.fillStyle = '#252220';   // dark recessed strip body
+      ctx.fillRect(lx, -24, 58, 2);
+      ctx.fillRect(lx, -20, 58, 2);
+      ctx.fillRect(lx, -16, 58, 2);
+      ctx.fillStyle = '#383430';   // top highlight of each strip
+      ctx.fillRect(lx, -24, 58, 1);
+      ctx.fillRect(lx, -20, 58, 1);
+      ctx.fillRect(lx, -16, 58, 1);
+
+      // Mid-panel fill between strips
+      ctx.fillStyle = '#484440';
+      ctx.fillRect(lx, -23, 58, 1);
+      ctx.fillRect(lx, -22, 58, 2);
+      ctx.fillRect(lx, -19, 58, 1);
+      ctx.fillRect(lx, -18, 58, 2);
+      ctx.fillRect(lx, -15, 58, 7);
+
+      // ---- Hydraulic arm attachment points — outer left edge ----
+      // Upper mount
+      ctx.fillStyle = '#585048';
+      ctx.fillRect(lx + 2, -27, 7,  8);   // housing block
+      ctx.fillStyle = '#7a7060';
+      ctx.fillRect(lx + 3, -26, 5,  6);   // arm collar face
+      ctx.fillStyle = '#3a3428';           // bolt recess
+      ctx.fillRect(lx + 5, -24, 2,  2);
+      ctx.fillStyle = '#9a8870';           // bolt highlight
+      ctx.fillRect(lx + 5, -24, 1,  1);
+      // Lower mount
+      ctx.fillStyle = '#585048';
+      ctx.fillRect(lx + 2, -17, 7,  8);
+      ctx.fillStyle = '#7a7060';
+      ctx.fillRect(lx + 3, -16, 5,  6);
+      ctx.fillStyle = '#3a3428';
+      ctx.fillRect(lx + 5, -14, 2,  2);
+      ctx.fillStyle = '#9a8870';
+      ctx.fillRect(lx + 5, -14, 1,  1);
+
+      // ---- Warning stripes along the center seam (inner right edge) ----
+      // Alternating 2 px diagonal bands — dark yellow and near-black
+      for (let row = 0; row < 20; row++) {
+        const band  = Math.floor(row / 2) % 2;
+        ctx.fillStyle = band === 0 ? '#886600' : '#181410';
+        ctx.fillRect(lx + 50 + Math.floor(row * 0.4), -28 + row, 5, 1);
+      }
+
+      // ---- Thick center seam — right edge of left panel ----
+      // 2 px dark gap
+      ctx.fillStyle = '#141210';
+      ctx.fillRect(lx + 56, -28, 2, 20);
+      // 1 px bright edge highlight on the panel-facing side
+      ctx.fillStyle = '#7a7060';
+      ctx.fillRect(lx + 55, -28, 1, 20);
+
+      // ---- Four large recessed bolt rings (2 × 2 px with shadow) ----
+      const leftBolts = [
+        { bx: lx + 16, by: -25 },
+        { bx: lx + 38, by: -25 },
+        { bx: lx + 16, by: -13 },
+        { bx: lx + 38, by: -13 },
+      ];
+      leftBolts.forEach(({ bx, by }) => {
+        ctx.fillStyle = '#0e0c0a';   // deep recess shadow
+        ctx.fillRect(bx - 1, by - 1, 4, 4);
+        ctx.fillStyle = '#585048';   // bolt ring face
+        ctx.fillRect(bx,     by,     2, 2);
+        ctx.fillStyle = '#9a9080';   // top-left highlight pixel
+        ctx.fillRect(bx,     by,     1, 1);
+        ctx.fillStyle = '#0c0a08';   // bottom-right shadow pixel
+        ctx.fillRect(bx + 1, by + 1, 1, 1);
+      });
+    }
+
+    // ================================================================
+    // RIGHT HATCH PANEL — 58 × 20 px, slides right as hatch opens
+    // x = rx … rx+58   where rx = slideAmt
+    // Panel is clipped out of view once its left edge passes x = +60.
+    // ================================================================
+    if (slideAmt < 62) {   // at least 2 px still visible
+      const rx = slideAmt;
+
+      // Base dark steel
+      ctx.fillStyle = '#3a3630';
+      ctx.fillRect(rx, -28, 58, 20);
+
+      // Top face — concrete-like outer skin
+      ctx.fillStyle = '#7a7464';
+      ctx.fillRect(rx, -28, 58, 4);
+      ctx.fillStyle = '#898078';
+      ctx.fillRect(rx, -28, 58, 1);
+      ctx.fillStyle = '#6e6860';
+      ctx.fillRect(rx, -27, 58, 1);
+      ctx.fillStyle = '#848070';
+      ctx.fillRect(rx, -26, 58, 1);
+
+      // Heavy steel reinforcement strips
+      ctx.fillStyle = '#252220';
+      ctx.fillRect(rx, -24, 58, 2);
+      ctx.fillRect(rx, -20, 58, 2);
+      ctx.fillRect(rx, -16, 58, 2);
+      ctx.fillStyle = '#383430';
+      ctx.fillRect(rx, -24, 58, 1);
+      ctx.fillRect(rx, -20, 58, 1);
+      ctx.fillRect(rx, -16, 58, 1);
+
+      // Mid-panel fill
+      ctx.fillStyle = '#484440';
+      ctx.fillRect(rx, -23, 58, 1);
+      ctx.fillRect(rx, -22, 58, 2);
+      ctx.fillRect(rx, -19, 58, 1);
+      ctx.fillRect(rx, -18, 58, 2);
+      ctx.fillRect(rx, -15, 58, 7);
+
+      // ---- Hydraulic arm attachment points — outer right edge ----
+      // Upper mount
+      ctx.fillStyle = '#585048';
+      ctx.fillRect(rx + 49, -27, 7,  8);
+      ctx.fillStyle = '#7a7060';
+      ctx.fillRect(rx + 50, -26, 5,  6);
+      ctx.fillStyle = '#3a3428';
+      ctx.fillRect(rx + 51, -24, 2,  2);
+      ctx.fillStyle = '#9a8870';
+      ctx.fillRect(rx + 52, -24, 1,  1);
+      // Lower mount
+      ctx.fillStyle = '#585048';
+      ctx.fillRect(rx + 49, -17, 7,  8);
+      ctx.fillStyle = '#7a7060';
+      ctx.fillRect(rx + 50, -16, 5,  6);
+      ctx.fillStyle = '#3a3428';
+      ctx.fillRect(rx + 51, -14, 2,  2);
+      ctx.fillStyle = '#9a8870';
+      ctx.fillRect(rx + 52, -14, 1,  1);
+
+      // ---- Warning stripes along the center seam (inner left edge) ----
+      for (let row = 0; row < 20; row++) {
+        const band  = Math.floor(row / 2) % 2;
+        ctx.fillStyle = band === 0 ? '#886600' : '#181410';
+        ctx.fillRect(rx + 3 - Math.floor(row * 0.4), -28 + row, 5, 1);
+      }
+
+      // ---- Thick center seam — left edge of right panel ----
+      ctx.fillStyle = '#141210';
+      ctx.fillRect(rx,     -28, 2, 20);   // 2 px dark gap
+      ctx.fillStyle = '#7a7060';
+      ctx.fillRect(rx + 2, -28, 1, 20);   // 1 px bright edge highlight
+
+      // ---- Four large recessed bolt rings ----
+      const rightBolts = [
+        { bx: rx + 18, by: -25 },
+        { bx: rx + 40, by: -25 },
+        { bx: rx + 18, by: -13 },
+        { bx: rx + 40, by: -13 },
+      ];
+      rightBolts.forEach(({ bx, by }) => {
+        ctx.fillStyle = '#0e0c0a';
+        ctx.fillRect(bx - 1, by - 1, 4, 4);
+        ctx.fillStyle = '#585048';
+        ctx.fillRect(bx,     by,     2, 2);
+        ctx.fillStyle = '#9a9080';
+        ctx.fillRect(bx,     by,     1, 1);
+        ctx.fillStyle = '#0c0a08';
+        ctx.fillRect(bx + 1, by + 1, 1, 1);
+      });
+    }
+
+    // ---- Centre lock mechanism — fades out as hatch begins to move ----
+    if (slideAmt < 6) {
+      ctx.globalAlpha = 1.0 - slideAmt / 6;
+      ctx.fillStyle = '#4a4440';   // lock housing
+      ctx.fillRect(-4, -28, 8, 20);
+      ctx.fillStyle = '#8a7a60';   // lock plate face
+      ctx.fillRect(-3, -22, 6,  4);
+      ctx.fillStyle = '#c0a870';   // lock pin highlight
+      ctx.fillRect(-1, -21, 2,  2);
+      ctx.globalAlpha = 1.0;
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // STEAM BURST — 4 bright white 1 px pixels scattered at the seam
+  // Triggered once at 0.5 s into windup; cleared after 0.28 s.
+  // Called after all structure layers so steam renders on top.
+  // ----------------------------------------------------------------
+  _renderSteamBurst(ctx) {
+    if (this._steamParticles.length === 0) return;
+    const maxAge = 0.28;
+    this._steamParticles.forEach(p => {
+      const lifeRatio = Math.max(0, 1.0 - p.age / maxAge);
+      ctx.globalAlpha = lifeRatio * lifeRatio;  // fade out quickly
+      ctx.fillStyle   = '#ffffff';
+      ctx.fillRect(Math.round(p.x), Math.round(p.y), 1, 1);
+    });
+    ctx.globalAlpha = 1.0;
+  }
+
+  // ----------------------------------------------------------------
+  // PERIMETER FENCE (Session 2)
+  // A chain-link / rail fence enclosing 280 px around the silo centre.
+  //
+  // Post positions  (x = centre of each 6 px post):
+  //   Outer left  : x = −140    Inner left  : x = −68
+  //   Inner right : x = +68     Outer right : x = +140
+  //
+  // Fence left section  : x = −140 … −68  (rail + pickets)
+  // Fence right section : x = +68  … +140 (rail + pickets)
+  //
+  // Each post: 6 × 32 px concrete (y = −32 … 0), pour-line seams,
+  //   darker cap at top, razor wire zigzag extending 6 px above cap.
+  // Two horizontal rails (2 px tall) connect each post pair:
+  //   Upper rail: y = −24 … −22    Lower rail: y = −14 … −12
+  // Vertical pickets: 1 px wide, spaced 6 px, between rail heights.
+  // Razor wire coils on top rail: alternating bright/dark 2 px runs.
+  // Warning beacons: 4 × 4 px housing + 2 × 2 px light on each post.
+  // ----------------------------------------------------------------
+  _renderPerimeterFence(ctx) {
+    // Post X centres
+    const posts = [-140, -68, 68, 140];
+
+    // ================================================================
+    // FENCE SECTIONS — rails + pickets between outer and inner posts
+    // Left section: posts[0] to posts[1]; right: posts[2] to posts[3]
+    // ================================================================
+    const sections = [
+      { x0: -140, x1: -68 },
+      { x0:   68, x1: 140 },
+    ];
+
+    sections.forEach(({ x0, x1 }) => {
+      const leftEdge  = x0 + 3;   // right edge of left post (post is 6 px wide, centred)
+      const rightEdge = x1 - 3;   // left edge of right post
+
+      // ---- Lower horizontal rail ----
+      ctx.fillStyle = '#383430';   // dark metal body
+      ctx.fillRect(leftEdge, -14, rightEdge - leftEdge, 2);
+      ctx.fillStyle = '#585450';   // 1 px top-edge highlight
+      ctx.fillRect(leftEdge, -14, rightEdge - leftEdge, 1);
+
+      // ---- Upper horizontal rail ----
+      ctx.fillStyle = '#383430';
+      ctx.fillRect(leftEdge, -24, rightEdge - leftEdge, 2);
+      ctx.fillStyle = '#585450';
+      ctx.fillRect(leftEdge, -24, rightEdge - leftEdge, 1);
+
+      // ---- Vertical pickets — 1 px wide, spaced 6 px apart ----
+      ctx.fillStyle = '#2e2c28';
+      for (let px = leftEdge + 3; px < rightEdge - 2; px += 6) {
+        ctx.fillRect(px, -24, 1, 12);   // spans between upper and lower rails
+      }
+
+      // ---- Razor wire coils on top rail — alternating bright/dark 2 px runs ----
+      let bright = true;
+      for (let wx = leftEdge; wx < rightEdge; wx += 2) {
+        ctx.fillStyle = bright ? '#c8c8c4' : '#484440';
+        ctx.fillRect(wx, -25, 2, 1);    // wire coil run on top of upper rail
+        bright = !bright;
+      }
+    });
+
+    // ================================================================
+    // POSTS — drawn after rails so posts overlap the rail ends cleanly
+    // ================================================================
+    posts.forEach((cx, i) => {
+      const px = cx - 3;   // left edge of 6 px wide post
+
+      // ---- Concrete post body ----
+      ctx.fillStyle = '#8c8880';   // light grey concrete
+      ctx.fillRect(px, -32, 6, 32);
+
+      // Pour-line seams (horizontal every 8 px — concrete form joints)
+      ctx.fillStyle = '#6e6c68';
+      ctx.fillRect(px, -32, 6, 1);   // top form edge
+      ctx.fillRect(px, -24, 6, 1);
+      ctx.fillRect(px, -16, 6, 1);
+      ctx.fillRect(px,  -8, 6, 1);
+
+      // Side shadow — right edge slightly darker (depth)
+      ctx.fillStyle = '#787470';
+      ctx.fillRect(px + 5, -32, 1, 32);
+
+      // Left highlight edge
+      ctx.fillStyle = '#9e9c98';
+      ctx.fillRect(px, -32, 1, 32);
+
+      // ---- Darker cap on top of post ----
+      ctx.fillStyle = '#606058';
+      ctx.fillRect(px - 1, -32, 8, 3);   // cap slightly wider
+      ctx.fillStyle = '#808078';
+      ctx.fillRect(px - 1, -32, 8, 1);   // cap top highlight
+
+      // ---- Razor wire zigzag extending 6 px above cap ----
+      // A jagged 1 px line in bright silver drawn as a zigzag
+      ctx.fillStyle = '#d0d0cc';
+      for (let zy = -38; zy >= -38; zy--) { void zy; } // no-op loop guard
+      // Three zigzag segments above the cap
+      ctx.fillRect(cx - 2, -35, 1, 1);   // left zag
+      ctx.fillRect(cx - 1, -36, 1, 1);
+      ctx.fillRect(cx,     -37, 1, 1);   // centre peak
+      ctx.fillRect(cx + 1, -36, 1, 1);
+      ctx.fillRect(cx + 2, -35, 1, 1);   // right zag
+      ctx.fillRect(cx - 2, -33, 1, 1);
+      ctx.fillRect(cx - 1, -34, 1, 1);
+      ctx.fillRect(cx + 1, -34, 1, 1);
+      ctx.fillRect(cx + 2, -33, 1, 1);
+
+      // ================================================================
+      // WARNING BEACON — mounted on the post cap
+      // Gold slow blink in idle; rapid red blink during windup / firing.
+      // ================================================================
+      const isAlert = (this._state === 'windup' || this._state === 'firing');
+      const blinkHz = isAlert ? 6.0 : 1.2;            // cycles per second
+      const phase   = this._lightPhases[i];
+      const litFrac = Math.sin(this._pulseT * blinkHz * Math.PI * 2 + phase);
+      const lit     = litFrac > 0;
+
+      // 4 × 4 px dark metal housing (centred on post, above cap)
+      ctx.fillStyle = '#2a2820';
+      ctx.fillRect(cx - 2, -42, 4, 4);
+
+      if (lit) {
+        // Soft 1 px glow halo — slightly larger rect in dim gold/red
+        const haloColor = isAlert ? '#602020' : '#5a4810';
+        ctx.fillStyle   = haloColor;
+        ctx.fillRect(cx - 3, -43, 6, 6);
+
+        // 2 × 2 px bright light centre
+        const lightColor = isAlert ? '#ff2020' : '#ffd040';
+        ctx.fillStyle    = lightColor;
+        ctx.fillRect(cx - 1, -41, 2, 2);
+      } else {
+        // Dim unlit state — warm dark amber / deep red tint
+        ctx.fillStyle = isAlert ? '#280808' : '#2a1e04';
+        ctx.fillRect(cx - 1, -41, 2, 2);
+      }
+
+      // Housing frame outline (drawn on top of glow/light)
+      ctx.fillStyle = '#2a2820';
+      ctx.fillRect(cx - 2, -42, 4, 1);   // top edge
+      ctx.fillRect(cx - 2, -39, 4, 1);   // bottom edge
+      ctx.fillRect(cx - 2, -42, 1, 4);   // left edge
+      ctx.fillRect(cx + 1, -42, 1, 4);   // right edge
+    });
   }
 
   // ----------------------------------------------------------------
