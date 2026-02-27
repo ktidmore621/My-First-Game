@@ -98,6 +98,13 @@
      Returns true on the first hit; deactivates that missile.
    ============================================================ */
 
+// Tunable per level — increase gradually as difficulty scales
+const MISSILE_SPEED = 120;             // world-space pixels per second
+// Tunable per level — increase gradually as difficulty scales
+const MISSILE_TURN_RATE = 30;          // degrees per second homing turn rate
+// Tunable per level — increase gradually as difficulty scales
+const MISSILE_TRACKING_DURATION = 4;  // seconds before missile flies ballistic
+
 class OrcSilo {
 
   constructor(worldX, groundY) {
@@ -130,11 +137,14 @@ class OrcSilo {
     // Staggered offsets so the four lights never all blink simultaneously.
     this._lightPhases = [0.0, 1.4, 2.8, 4.2];
 
-    // ---- Outgoing missiles — pool of 6 in-flight ----
-    // Each slot: { active, worldX, y, originY, velocityX, velocityY }
-    // worldX is world-space (missiles fire straight up, no X drift).
-    this._missiles = Array.from({ length: 6 }, () => ({
-      active: false, worldX: 0, y: 0, originY: 0, velocityX: 0, velocityY: 0,
+    // ---- Outgoing missiles — pool of 2 in-flight ----
+    // Each slot: { active, worldX, y, originY, angle, age, velocityX, velocityY }
+    // worldX is world-space; angle in radians (-π/2 = pointing up); age in seconds.
+    // Pool size = max concurrent missiles. Increase for higher difficulty levels
+    this._missiles = Array.from({ length: 2 }, () => ({
+      active: false, worldX: 0, y: 0, originY: 0,
+      angle: -Math.PI / 2, age: 0,
+      velocityX: 0, velocityY: 0,
     }));
 
     // ---- Damage-state rendering flags ----
@@ -192,13 +202,39 @@ class OrcSilo {
       return;
     }
 
-    // ---- Advance in-flight missiles; cull any that have traveled too far ----
+    // ---- Advance in-flight missiles with homing logic ----
+    // Missiles steer toward the player for MISSILE_TRACKING_DURATION seconds
+    // (turn rate capped at MISSILE_TURN_RATE deg/s), then fly ballistic.
+    const trackRateRad = (MISSILE_TURN_RATE * Math.PI / 180); // deg/s → rad/s
     this._missiles.forEach(m => {
       if (!m.active) return;
+      m.age += dt;
+
+      // Homing phase: steer toward player while tracking window is open
+      if (m.age < MISSILE_TRACKING_DURATION) {
+        const dx = playerWorldX - m.worldX;
+        const dy = playerY      - m.y;
+        const targetAngle = Math.atan2(dy, dx);
+
+        // Shortest angular path to target, wrapped to −π…+π
+        let delta = targetAngle - m.angle;
+        while (delta >  Math.PI) delta -= Math.PI * 2;
+        while (delta < -Math.PI) delta += Math.PI * 2;
+
+        // Clamp turn to max rate this frame
+        delta    = Math.max(-trackRateRad * dt, Math.min(trackRateRad * dt, delta));
+        m.angle += delta;
+      }
+
+      // Velocity from current angle and fixed speed
+      m.velocityX = Math.cos(m.angle) * MISSILE_SPEED;
+      m.velocityY = Math.sin(m.angle) * MISSILE_SPEED;
+
       m.worldX += m.velocityX * dt;
       m.y      += m.velocityY * dt;
-      // Deactivate after 700 px of upward travel from launch point
-      if (Math.abs(m.y - m.originY) > 700) m.active = false;
+
+      // Deactivate after max flight time or if well off-screen vertically
+      if (m.age > MISSILE_TRACKING_DURATION * 3 || m.y < -200) m.active = false;
     });
 
     // ---- Detection: silo enters the visible camera viewport (right edge + 100 px buffer) ----
@@ -376,11 +412,12 @@ class OrcSilo {
 
     for (const m of this._missiles) {
       if (!m.active) continue;
-      // Missile AABB: 4×14 px covering body + warhead, centred on missile pos
-      const mx = m.worldX - 2;
-      const my = m.y      - 8;
-      if (mx < px + hitW && mx + 4 > px &&
-          my < py + hitH && my + 14 > py) {
+      // Missile AABB: 10×21 px (≈ 80% of visual 14×36), centred on missile pos.
+      // Covers warhead body (sy−13) through mid-fuselage (sy+8) — forgiving hitbox.
+      const mx = m.worldX - 5;
+      const my = m.y      - 13;
+      if (mx < px + hitW && mx + 10 > px &&
+          my < py + hitH && my + 21 > py) {
         m.active = false; // missile consumed on impact
         return true;
       }
@@ -396,21 +433,23 @@ class OrcSilo {
   // the silo hatch. The missile does not track — it travels at a fixed
   // 250 px/s in the negative-Y direction (upward in screen space).
   _fireMissile(targetWorldX, targetY) { // eslint-disable-line no-unused-vars
+    // With a 2-slot pool, this naturally enforces the max-2 limit —
+    // if both missiles are in flight, find() returns undefined and we bail out.
     const m = this._missiles.find(m => !m.active);
-    if (!m) return; // all slots in-flight — shot dropped silently
+    if (!m) return; // both slots in-flight — launch suppressed
 
     // Launch point: centre of silo at the top of the rim
     const tipWorldX = this.worldX;
     const tipY      = this._groundY - 28; // top of the armored rim
 
-    const SPEED = 250; // px/s upward
-
     m.active    = true;
     m.worldX    = tipWorldX;
     m.y         = tipY;
     m.originY   = tipY;
+    m.angle     = -Math.PI / 2; // launch straight up; tracking steers from there
+    m.age       = 0;
     m.velocityX = 0;
-    m.velocityY = -SPEED;
+    m.velocityY = -MISSILE_SPEED;
   }
 
   // ================================================================
@@ -922,21 +961,21 @@ class OrcSilo {
       if (hatchOpen > 0.80) {
         const noseAlpha = Math.min(1.0, (hatchOpen - 0.80) / 0.20) * tubeAlpha;
         ctx.globalAlpha = noseAlpha;
-        // How far the nose has risen: 0 = at shaft bottom, 10 = peeking above
-        const rise = Math.round((hatchOpen - 0.80) / 0.20 * 10);
+        // Rise 0 → 14 px as hatch opens fully; noseY tracks the warhead base
+        const rise = Math.round((hatchOpen - 0.80) / 0.20 * 14);
         const noseY = -8 - rise;       // starts near shaft floor, rises
 
-        // Voidheart warhead body
+        // Voidheart warhead (14×12 px matching the in-flight missile)
         ctx.fillStyle = '#880050';
-        ctx.fillRect(-3, noseY,      6, 4);   // warhead lower body
+        ctx.fillRect(-7, noseY,      14, 7);  // warhead body (14×7 px)
         ctx.fillStyle = '#aa0060';
-        ctx.fillRect(-2, noseY - 2,  4, 2);   // narrowing nose
+        ctx.fillRect(-4, noseY - 4,   8, 4);  // narrowing nose (8×4 px)
         ctx.fillStyle = '#cc20a0';
-        ctx.fillRect(-1, noseY - 3,  2, 1);   // single-pixel tip
-        // Side conduit flanges on warhead
+        ctx.fillRect(-1, noseY - 5,   2, 1);  // tip (2×1 px)
+        // Side Voidheart flanges — 2 px each, outside the fuselage
         ctx.fillStyle = '#440030';
-        ctx.fillRect(-4, noseY + 1,  1, 2);
-        ctx.fillRect( 3, noseY + 1,  1, 2);
+        ctx.fillRect(-9, noseY + 1,   2, 3);  // left flange
+        ctx.fillRect( 7, noseY + 1,   2, 3);  // right flange
       }
 
       ctx.globalAlpha = 1.0;
@@ -1623,39 +1662,48 @@ class OrcSilo {
       const sx = Math.round(m.worldX - cameraX);
       const sy = Math.round(m.y);
 
-      // Engine glow / exhaust flame (widest element — drawn first)
-      ctx.fillStyle = '#ff8c00';                         // amber outer flame
-      ctx.fillRect(sx - 3, sy + 6, 6, 4);
-      ctx.fillStyle = '#ffff00';                         // bright yellow centre
-      ctx.fillRect(sx - 2, sy + 7, 4, 2);
-      ctx.fillStyle = '#ffffff';                         // white-hot core pixel
-      ctx.fillRect(sx - 1, sy + 7, 2, 1);
+      // ---- Total missile bounds: 14 px wide × 36 px tall ----
+      // Layout from tip (sy−18) down to flame bottom (sy+18):
+      //   Warhead  : sy−18 … sy−6   (12 px, 14 px wide at body)
+      //   Fuselage : sy−6  … sy+12  (18 px, 10 px wide)
+      //   Fins     : sy+6  … sy+12  ( 6 px, extend to 14 px wide)
+      //   Flame    : sy+12 … sy+18  ( 6 px, 10 px wide — matches body)
 
-      // Stabilizer fins — dark metal flanges at the tail
+      // Engine glow / exhaust flame — widest element, drawn first so body
+      // layers paint over any overlap at the seam
+      ctx.fillStyle = '#ff8c00';                          // amber outer flame
+      ctx.fillRect(sx - 5, sy + 12, 10, 6);              // outer flame  (10×6 px)
+      ctx.fillStyle = '#ffff00';                          // bright yellow centre
+      ctx.fillRect(sx - 4, sy + 13,  8, 4);              // inner flame  (8×4 px)
+      ctx.fillStyle = '#ffffff';                          // white-hot core
+      ctx.fillRect(sx - 2, sy + 14,  4, 2);              // core          (4×2 px)
+
+      // Stabilizer fins — dark metal flanges bracketing the tail
       ctx.fillStyle = '#383028';
-      ctx.fillRect(sx - 4, sy + 4, 2, 3);   // left fin
-      ctx.fillRect(sx + 2, sy + 4, 2, 3);   // right fin
+      ctx.fillRect(sx - 7, sy +  6, 2, 6);   // left fin  (2×6 px)
+      ctx.fillRect(sx + 5, sy +  6, 2, 6);   // right fin (2×6 px)
 
-      // Fuselage — dark metal body with panel seam and highlight
+      // Fuselage — dark metal body with panel seam and left-edge highlight
       ctx.fillStyle = '#4a4038';
-      ctx.fillRect(sx - 2, sy - 4, 4, 10);  // main body
-      ctx.fillStyle = '#2e2820';             // horizontal panel seam
-      ctx.fillRect(sx - 2, sy,     4,  1);
+      ctx.fillRect(sx - 5, sy - 6, 10, 18); // main body  (10×18 px)
+      ctx.fillStyle = '#2e2820';             // horizontal panel seam (near mid-body)
+      ctx.fillRect(sx - 5, sy + 3, 10,  1);
       ctx.fillStyle = '#6a6050';             // left-edge highlight (depth)
-      ctx.fillRect(sx - 2, sy - 4, 1, 10);
+      ctx.fillRect(sx - 5, sy - 6,  1, 18);
 
-      // Warhead — Voidheart-ore explosive tip, purplish-red
-      ctx.fillStyle = '#880050';
-      ctx.fillRect(sx - 2, sy - 8,  4,  4);  // warhead body
-      ctx.fillStyle = '#aa0060';
-      ctx.fillRect(sx - 1, sy - 10, 2,  2);  // narrowing nose
-      ctx.fillStyle = '#cc20a0';
-      ctx.fillRect(sx,     sy - 11, 1,  1);  // single-pixel tip
-
-      // Voidheart side-glow flanking the warhead (1 px each side)
+      // Voidheart side-glow flanges — sit between fuselage and warhead edges,
+      // giving the wider warhead a visible bracket at the fuselage transition
       ctx.fillStyle = '#440030';
-      ctx.fillRect(sx - 3, sy - 7, 1, 3);
-      ctx.fillRect(sx + 2, sy - 7, 1, 3);
+      ctx.fillRect(sx - 7, sy - 8, 2, 5);   // left flange  (2×5 px)
+      ctx.fillRect(sx + 5, sy - 8, 2, 5);   // right flange (2×5 px)
+
+      // Warhead — Voidheart-ore explosive tip (14×12 px)
+      ctx.fillStyle = '#880050';
+      ctx.fillRect(sx - 7, sy - 13, 14, 7); // warhead body    (14×7 px)
+      ctx.fillStyle = '#aa0060';
+      ctx.fillRect(sx - 4, sy - 17,  8, 4); // narrowing nose  (8×4 px)
+      ctx.fillStyle = '#cc20a0';
+      ctx.fillRect(sx - 1, sy - 18,  2, 1); // tip             (2×1 px)
     });
   }
 }
