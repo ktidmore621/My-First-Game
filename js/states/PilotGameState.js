@@ -273,7 +273,7 @@ class PilotGameState {
       `[Battlefield] Generated ${this._enemies.length} enemies across ${this._BATTLEFIELD_W}px battlefield`
     );
     console.log(`[Battlefield] Terrain seed: ${this._terrainSeed.toFixed(1)} | Placement: ${typeList}`);
-    console.log(`[Battlefield] Terrain heights: ${this._terrainHeights.length} samples every 32 px | range −14…+10 px`);
+    console.log(`[Battlefield] Terrain heights: ${this._terrainHeights.length} samples every 32 px | range −22…+16 px`);
   }
 
   // ================================================================
@@ -299,10 +299,11 @@ class PilotGameState {
     // Normalise the [~0.1715, ~0.2512] output range to [0, 1]
     const srf = () => Math.max(0, Math.min(1, (sr() - 0.1715) / (0.2512 - 0.1715)));
 
-    // Raw heights: map [0, 1] → [−14, +10]  (24 px total range)
+    // Raw heights: map [0, 1] → [−22, +16]  (38 px total range)
+    // Wider range makes hills and valleys dramatically more visible.
     const heights = new Array(count);
     for (let i = 0; i < count; i++) {
-      heights[i] = srf() * 24 - 14;
+      heights[i] = srf() * 38 - 22;
     }
 
     // Smooth twice: each value becomes a weighted average of itself and its
@@ -680,58 +681,138 @@ class PilotGameState {
     const groundH  = H - horizonY;
     const STEP     = 4; // screen-pixel column width for terrain profile rendering
 
-    // Sky extension: fills the 16 px buffer below the sky baseline.
-    // Terrain can dip up to 14 px below horizonY; without this fill a gap
-    // would appear between the flat sky bands and a dipped terrain surface.
-    ctx.fillStyle = '#1e3a52'; // horizon sky colour — matches _drawSky bottom band
-    ctx.fillRect(0, horizonY, W, 16);
+    // Sky extension: terrain can dip 16 px below horizonY; fill that buffer
+    // with the bottom sky colour so no gap appears on downward slopes.
+    ctx.fillStyle = '#1e3a52'; // matches _drawSky bottom band
+    ctx.fillRect(0, horizonY, W, 18);
 
-    // Precompute the two upper band heights (proportions match the original flat layout)
-    const bandA = Math.floor(groundH * 0.30); // sandy top   (30 %)
-    const bandB = Math.floor(groundH * 0.40); // mid earth   (40 %)
-    // Dark base occupies the remaining 30 % — drawn per column to canvas bottom
-
-    // Render the ground column by column following the seeded terrain height profile.
-    // _getTerrainHeightAt() linearly interpolates between 32 px samples so there
-    // is no visible stepping even at 4 px column width.
+    // ---- Column-by-column terrain rendering ----
+    // Each 4 px column is processed independently so the full terrain height
+    // profile drives every visual layer — texture bands, cliff strata, horizon
+    // transition, surface noise and scattered rocks all follow the height curve.
     for (let sx = 0; sx < W; sx += STEP) {
-      const worldX   = sx + this._cameraX;
-      const height   = this._getTerrainHeightAt(worldX);
-      const surfaceY = Math.round(horizonY - height);
+      const worldX      = sx + this._cameraX;
+      const height      = this._getTerrainHeightAt(worldX);
+      const surfaceY    = Math.round(horizonY - height);
 
-      // Sandy top band
-      ctx.fillStyle = '#4a3820';
-      ctx.fillRect(sx, surfaceY, STEP, bandA);
+      // Compare with the previous column to detect cliff faces (rising terrain).
+      const prevHeight   = this._getTerrainHeightAt(worldX - STEP);
+      const prevSurfaceY = Math.round(horizonY - prevHeight);
+      // Positive when terrain just rose: the cliff height is the step up.
+      const cliffH       = prevSurfaceY - surfaceY;
 
-      // Mid earth band
-      ctx.fillStyle = '#3c2e16';
-      ctx.fillRect(sx, surfaceY + bandA, STEP, bandB);
-
-      // Dark base — extends flush to the canvas bottom regardless of terrain height
-      ctx.fillStyle = '#2a2010';
-      ctx.fillRect(sx, surfaceY + bandA + bandB, STEP, H - (surfaceY + bandA + bandB));
-
-      // Exposed rock face: where adjacent 32 px terrain samples differ by more
-      // than 6 px the slope is steep enough to reveal exposed rock — draw a
-      // 4 px darker band just below the surface edge line.
-      const si = Math.floor(worldX / 32);
-      if (si > 0 && si < this._terrainHeights.length) {
-        const hDiff = Math.abs(
-          this._terrainHeights[si] - this._terrainHeights[Math.max(0, si - 1)]
-        );
-        if (hDiff > 6) {
-          ctx.fillStyle = '#1a0e06'; // exposed rock — darker than sandy surface
-          ctx.fillRect(sx, surfaceY + 2, STEP, 4);
+      // ---- GROUND BODY: 2 px horizontal bands from below horizon to canvas bottom ----
+      // Alternates three tones creating a subtle geological layer feel.
+      // The accent (deepest stratum) fires every 6 px suggesting compressed strata.
+      const bodyStart = surfaceY + 12; // horizon transition occupies top 12 px
+      for (let by = bodyStart; by < H; by += 2) {
+        const bandY = by - bodyStart;
+        if (bandY % 6 === 0) {
+          ctx.fillStyle = '#1f1406'; // accent — deep stratum line
+        } else if (Math.floor(bandY / 2) % 2 === 0) {
+          ctx.fillStyle = '#2a1a0c'; // primary
+        } else {
+          ctx.fillStyle = '#251708'; // secondary
         }
+        ctx.fillRect(sx, by, STEP, Math.min(2, H - by));
       }
 
-      // Terrain surface edge — 2 px bright seam at the ground top
-      ctx.fillStyle = '#5e4a28';
-      ctx.fillRect(sx, surfaceY, STEP, 2);
+      // ---- CLIFF FACE STRATA (exposed geology on raised sections) ----
+      // Only rendered where the terrain has stepped upward relative to the
+      // previous column — the vertical face of any raised section.
+      if (cliffH > 3) {
+        const cliffTop    = surfaceY;
+        const cliffBottom = prevSurfaceY;
+
+        // Top 4 px of cliff: surface soil layer
+        ctx.fillStyle = '#2a1a0c';
+        ctx.fillRect(sx, cliffTop, STEP, Math.min(4, cliffH));
+
+        if (cliffH > 4) {
+          // Next 6 px: compressed mid-layer with horizontal crack lines every 2 px
+          const midStart = cliffTop + 4;
+          const midH     = Math.min(6, cliffH - 4);
+          ctx.fillStyle  = '#1a0e06';
+          ctx.fillRect(sx, midStart, STEP, midH);
+          ctx.fillStyle  = '#0d0804'; // crack lines — slightly darker
+          for (let cy = midStart; cy < midStart + midH; cy += 2) {
+            ctx.fillRect(sx, cy, STEP, 1);
+          }
+        }
+
+        if (cliffH > 10) {
+          // Remaining depth: deep bedrock with scattered Voidheart mineral pixels
+          const bedStart = cliffTop + 10;
+          const bedH     = cliffH - 10;
+          ctx.fillStyle  = '#0d0804';
+          ctx.fillRect(sx, bedStart, STEP, bedH);
+          // Dark purple mineral flecks — deterministic from worldX so they
+          // stay fixed to the terrain as the camera scrolls.
+          const mHash = (worldX * 7 + 43) % 11;
+          if (mHash < 2) {
+            ctx.fillStyle = '#1a0814'; // Voidheart contamination
+            ctx.fillRect(
+              sx + (mHash % STEP),
+              bedStart + Math.floor(bedH * 0.4),
+              1, 1
+            );
+          }
+        }
+
+        // 2 px shadow band at the base of the raised section — anchors the cliff
+        ctx.fillStyle = '#080604';
+        ctx.fillRect(sx, cliffBottom, STEP, 2);
+      }
+
+      // ---- 5-LAYER HORIZON TRANSITION (follows terrain height exactly) ----
+      // These bands sit at the very surface, overwriting any cliff strata at the
+      // top so the surface edge always reads cleanly.
+      let hy = surfaceY;
+      ctx.fillStyle = '#4a3a20'; // Layer 1 — 1 px bright alien horizon glow
+      ctx.fillRect(sx, hy, STEP, 1); hy += 1;
+      ctx.fillStyle = '#3a2a14'; // Layer 2 — 2 px warm ridge tone
+      ctx.fillRect(sx, hy, STEP, 2); hy += 2;
+      ctx.fillStyle = '#2a1a0c'; // Layer 3 — 2 px mid surface
+      ctx.fillRect(sx, hy, STEP, 2); hy += 2;
+      ctx.fillStyle = '#1a0e06'; // Layer 4 — 3 px shadow band
+      ctx.fillRect(sx, hy, STEP, 3); hy += 3;
+      ctx.fillStyle = '#0d0804'; // Layer 5 — 4 px deep shadow
+      ctx.fillRect(sx, hy, STEP, 4); // hy now == surfaceY + 12 == bodyStart
+
+      // 1 px highlight at the very top of every raised section — the ridge
+      // catches the alien light at a slightly warmer tone than flat ground.
+      if (cliffH > 3) {
+        ctx.fillStyle = '#3a2a14';
+        ctx.fillRect(sx, surfaceY, STEP, 1);
+      }
+
+      // ---- SURFACE NOISE PASS ----
+      // Every 4 px column: one 1×1 px fleck that is one tone lighter or darker
+      // than its neighbours, creating micro-variation across the surface layer.
+      const nHash = (worldX * 3 + 17) % 7;
+      if (nHash < 3) {
+        ctx.fillStyle = (nHash < 1) ? '#3a2a14' : '#1a0e06';
+        ctx.fillRect(sx + 1, surfaceY + 6, 1, 1);
+      }
+
+      // ---- SCATTERED SURFACE ROCKS ----
+      // 1×1 and 2×1 px pixels in grey-brown tones placed at deterministic but
+      // varied intervals — they are world-space so they scroll correctly.
+      const rHash = (worldX * 13 + 7) % 23;
+      if (rHash < 4) {
+        const rockColors = ['#3a2a1a', '#4a3a28', '#2a1e10'];
+        ctx.fillStyle    = rockColors[rHash % 3];
+        const ry         = surfaceY + 4 + (rHash % 4);
+        if (rHash < 2) {
+          ctx.fillRect(sx + 1, ry, 1, 1); // 1×1 rock
+        } else {
+          ctx.fillRect(sx,     ry, 2, 1); // 2×1 rock
+        }
+      }
     }
 
-    // Ground detail features — tile-based, camera-driven (same tiling as before).
-    // _drawGroundTile now adjusts each feature's Y to the local terrain surface.
+    // Ground detail features — tile-based, camera-driven.
+    // _drawGroundTile adjusts each feature's Y to the local terrain surface.
     const shift = this._cameraX % this._TILE_W;
     for (let tileX = -shift; tileX < W; tileX += this._TILE_W) {
       this._drawGroundTile(ctx, tileX, horizonY, groundH);
