@@ -37,6 +37,16 @@
 // Total pixel width of the scrolling battlefield
 const BATTLEFIELD_W = 4800;
 
+// Enemy X positions (match EnemyManager._generateBattlefield) used to flatten
+// terrain under each structure before TerrainSystem.buildFeatures() is called.
+const ENEMY_CANNON_XS = [600, 1100, 1500, 1950, 2350, 2700, 3300, 3650, 4300, 4550];
+const ENEMY_SILO_XS   = [900, 1900, 2900, 4050];
+const CANNON_FOOTPRINT = 80;   // world-px width of one OrcCannon structure
+const SILO_FOOTPRINT   = 280;  // world-px width of one OrcSilo (including perimeter)
+const CANNON_FLAT_HALF = 60;   // half of flat zone under cannons  (±60 px, 120 px total)
+const SILO_FLAT_HALF   = 170;  // half of flat zone under silos    (±170 px, 340 px total)
+const TERRAIN_BLEND_W  = 20;   // blend fringe on each flat-zone edge
+
 // Player bolt constants
 const BOLT_SPEED   = 500;  // px/s rightward
 const BOLT_DAMAGE  = 1;    // HP per hit on OrcCannon (6-hp enemy)
@@ -74,7 +84,23 @@ class PilotGameScene extends Phaser.Scene {
 
     // ---- Visuals (build order matters — lower depth = drawn first) ----
     this._buildSky(W, H);      // depth 0 — fixed, never scrolls
-    this._buildGround(H);      // depth 1 — scrolls with camera
+
+    // ---- Terrain system ----
+    // Generates height map, flattens under each enemy, bakes static ground
+    // to a canvas-backed texture, creates parallax hill TileSprites, and
+    // starts the animated overlay + particle emitters.
+    this._terrain = new TerrainSystem(this, BATTLEFIELD_W);
+
+    // Flatten terrain under every enemy structure (cannon midX = x + footprint/2)
+    ENEMY_CANNON_XS.forEach(x =>
+      this._terrain.flattenZone(x + CANNON_FOOTPRINT / 2, CANNON_FLAT_HALF, TERRAIN_BLEND_W)
+    );
+    ENEMY_SILO_XS.forEach(x =>
+      this._terrain.flattenZone(x + SILO_FOOTPRINT / 2, SILO_FLAT_HALF, TERRAIN_BLEND_W)
+    );
+
+    this._terrain.buildFeatures();   // generate roads, craters, veins, pools, pits
+    this._terrain.build();           // create all Phaser display objects (depth 0.5–1.6)
 
     // ---- Projectile groups ----
     // All three groups share classType: Projectile so group.get() constructs
@@ -161,6 +187,20 @@ class PilotGameScene extends Phaser.Scene {
 
     const dt = delta / 1000;
     this._elapsed += dt;
+
+    // Terrain animated overlay + parallax scrolling + dust particles
+    this._terrain.update(time, delta);
+
+    // ---- Enemy bolts that reach the ground: spawn dirt impact burst ----
+    // horizonY sits at 72% of 540 = ~388 px; add terrain max-dip of 22 px.
+    const groundImpactY = Math.floor(540 * 0.72) + 22;
+    this.enemyBolts.getChildren().forEach(bolt => {
+      if (!bolt.active) return;
+      if (bolt.y >= groundImpactY) {
+        this._terrain.spawnImpact(bolt.x, bolt.y);
+        bolt.kill();
+      }
+    });
 
     // Ship movement + effects
     this._ship.update(this._input);
@@ -417,73 +457,14 @@ class PilotGameScene extends Phaser.Scene {
   }
 
   // ==========================================================
-  // GROUND — scrolling surface spanning full BATTLEFIELD_W
-  // Flat fillRect shapes only — no ellipses (Visual Style Guide rule 4).
+  // GROUND — replaced by TerrainSystem (see js/systems/TerrainSystem.js)
+  //
+  // TerrainSystem.build() creates:
+  //   depth 0.5  — far parallax hills  (TileSprite)
+  //   depth 0.7  — near parallax hills (TileSprite)
+  //   depth 1    — static ground       (Image from offscreen canvas)
+  //   depth 1.5  — animated overlay    (Graphics, redrawn each frame)
   // ==========================================================
-
-  _buildGround(H) {
-    const gfx      = this.add.graphics().setDepth(1);
-    const horizonY = Math.floor(H * 0.72);
-    const groundH  = H - horizonY;
-
-    // ---- Base colour bands ----
-    gfx.fillStyle(0x2a2010);
-    gfx.fillRect(0, horizonY, BATTLEFIELD_W, Math.floor(groundH * 0.40));
-
-    gfx.fillStyle(0x3c2e16);
-    gfx.fillRect(0, horizonY + Math.floor(groundH * 0.40),
-      BATTLEFIELD_W, Math.floor(groundH * 0.30));
-
-    gfx.fillStyle(0x4a3820);
-    gfx.fillRect(0, horizonY + Math.floor(groundH * 0.70),
-      BATTLEFIELD_W, groundH - Math.floor(groundH * 0.70));
-
-    // ---- Road strips ----
-    const roadH  = 6;
-    const roadY1 = horizonY + Math.floor(groundH * 0.25);
-    const roadY2 = horizonY + Math.floor(groundH * 0.65);
-
-    gfx.fillStyle(0x1a1a10);
-    gfx.fillRect(0, roadY1, BATTLEFIELD_W, roadH);
-    gfx.fillRect(0, roadY2, BATTLEFIELD_W, roadH);
-
-    // Road centre-line dashes
-    gfx.fillStyle(0x5a5030);
-    for (let rx = 0; rx < BATTLEFIELD_W; rx += 80) {
-      gfx.fillRect(rx, roadY1 + 2, 40, 2);
-      gfx.fillRect(rx, roadY2 + 2, 40, 2);
-    }
-
-    // ---- Bomb craters — outer ejecta ring + inner pit ----
-    const craterXs = [200, 480, 820, 1150, 1600, 2200, 2800, 3400, 3900, 4400];
-    craterXs.forEach(cx => {
-      gfx.fillStyle(0x1a150a);
-      gfx.fillRect(cx - 20, horizonY + 4, 40, 10);   // sandy ejecta ring
-      gfx.fillStyle(0x0d0a06);
-      gfx.fillRect(cx - 12, horizonY + 5, 24,  8);   // inner dark pit
-    });
-
-    // ---- Scorched / burned patches ----
-    gfx.fillStyle(0x1e1408);
-    [600, 1400, 2100, 3000, 3800, 4200].forEach(px => {
-      gfx.fillRect(px, horizonY + 2, 60, 14);
-    });
-
-    // ---- Sandy texture patches ----
-    gfx.fillStyle(0x5e4a28);
-    [350, 1100, 1950, 2700, 3600].forEach(px => {
-      gfx.fillRect(px,      horizonY + 12, 55, 8);
-      gfx.fillRect(px + 10, horizonY + 16, 35, 5);
-    });
-
-    // ---- Rubble piles (small rectangle clusters) ----
-    gfx.fillStyle(0x5e4a28);
-    [950, 1750, 2500, 3300].forEach(px => {
-      gfx.fillRect(px,      horizonY + 8, 12, 6);
-      gfx.fillRect(px +  8, horizonY + 6,  8, 4);
-      gfx.fillRect(px + 14, horizonY + 9, 10, 5);
-    });
-  }
 
   // ==========================================================
   // HUD — viewport-fixed elements (setScrollFactor 0, depth 50+)
