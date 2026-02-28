@@ -88,6 +88,13 @@ class PilotGameScene extends Phaser.Scene {
     // ---- HUD (fixed to viewport) ----
     this._buildHUD(W, H);
 
+    // ---- Enemy population ----
+    // EnemyManager creates all OrcCannon / OrcSilo instances at their
+    // battlefield world positions.  They register themselves with the scene
+    // via scene.add.existing(), so Phaser renders them automatically.
+    const groundY = Math.floor(H * 0.72); // matches _buildGround horizonY
+    this._enemyManager = new EnemyManager(this, groundY);
+
     // ---- Game state ----
     this._elapsed      = 0;
     this._missionTime  = 30;   // seconds; placeholder mission length
@@ -112,6 +119,23 @@ class PilotGameScene extends Phaser.Scene {
     // FIRE stub — log to console until projectiles are wired up
     if (this._input.firePressed) {
       console.log('[PilotGameScene] FIRE pressed — projectiles not yet implemented');
+    }
+
+    // Update all enemies (OrcCannons + OrcSilos via EnemyManager)
+    this._enemyManager.update(
+      time,
+      delta,
+      this._ship.x,                  // player world X
+      this._ship.y,                  // player screen Y
+      this.cameras.main.scrollX      // camera left-edge world X
+    );
+
+    // Check enemy fire hitting the player ship
+    // Ship hitbox: 40×18 px (tight inner box, not the full visual triangle)
+    if (this._enemyManager.checkEnemyFireHitPlayer(
+      this._ship.x, this._ship.y, 40, 18
+    )) {
+      this._ship.health.takeDamage(1);
     }
 
     // Update on-screen HUD
