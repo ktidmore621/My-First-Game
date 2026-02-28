@@ -28,6 +28,7 @@ const config = {
     MainMenuScene,
     PlaneSelectScene,
     PilotGameScene,
+    GameOverScene,
   ],
 
   // Responsive scaling: fill the screen while preserving 16:9 ratio

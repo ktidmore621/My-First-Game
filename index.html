@@ -47,15 +47,20 @@
   <!--
     Systems — EnemyManager depends on OrcCannon, OrcSilo, and Projectile.
     TerrainSystem depends only on Phaser (no entity dependencies).
-    Both load after entities and before the scenes that use them.
+    LightingSystem and SoundSystem depend only on Phaser.
+    All load after entities and before the scenes that use them.
   -->
   <script src="js/systems/TerrainSystem.js"></script>
   <script src="js/systems/EnemyManager.js"></script>
+  <script src="js/systems/LightingSystem.js"></script>
+  <script src="js/systems/SoundSystem.js"></script>
 
   <!--
     Phaser Scenes — load in dependency order before main.js.
     Each scene must be declared before any scene that transitions to it.
+    GameOverScene must load before PilotGameScene (which starts it on death/win).
   -->
+  <script src="js/scenes/GameOverScene.js"></script>
   <script src="js/scenes/MainMenuScene.js"></script>
   <script src="js/scenes/PlaneSelectScene.js"></script>
   <script src="js/scenes/PilotGameScene.js"></script>

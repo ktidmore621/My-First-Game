@@ -102,6 +102,12 @@ class PilotGameScene extends Phaser.Scene {
     this._terrain.buildFeatures();   // generate roads, craters, veins, pools, pits
     this._terrain.build();           // create all Phaser display objects (depth 0.5–1.6)
 
+    // ---- Lighting system (depth 30–31, screen space) ----
+    this._lighting = new LightingSystem(this);
+    const featurePos = this._terrain.getFeaturePositions();
+    this._lighting.setVoidheartPositions(featurePos.veins);
+    this._lighting.setPoolPositions(featurePos.pools);
+
     // ---- Projectile groups ----
     // All three groups share classType: Projectile so group.get() constructs
     // new instances on demand (up to maxSize), and runChildUpdate: true means
@@ -154,6 +160,9 @@ class PilotGameScene extends Phaser.Scene {
     // ---- HUD (fixed to viewport) ----
     this._buildHUD(W, H);
 
+    // ---- Sound system (stub — no audio assets yet) ----
+    this._sound = new SoundSystem(this);
+
     // ---- Enemy population ----
     // EnemyManager creates all OrcCannon / OrcSilo instances at their
     // battlefield world positions.  They register themselves with the scene
@@ -174,6 +183,7 @@ class PilotGameScene extends Phaser.Scene {
     this._elapsed      = 0;
     this._missionTime  = 30;   // seconds; placeholder mission length
     this._gameOver     = false;
+    this._trauma       = 0;    // camera shake trauma value (0–1)
   }
 
   // ==========================================================
@@ -190,6 +200,14 @@ class PilotGameScene extends Phaser.Scene {
 
     // Terrain animated overlay + parallax scrolling + dust particles
     this._terrain.update(time, delta);
+
+    // ---- Missile exhaust glow — add a light source per active missile ----
+    this.missiles.getChildren().forEach(m => {
+      if (m.active) this._lighting.addMissileExhaust(m.x, m.y);
+    });
+
+    // ---- Lighting layer (always after game objects update, before HUD) ----
+    this._lighting.update(time, delta);
 
     // ---- Enemy bolts that reach the ground: spawn dirt impact burst ----
     // horizonY sits at 72% of 540 = ~388 px; add terrain max-dip of 22 px.
@@ -221,6 +239,9 @@ class PilotGameScene extends Phaser.Scene {
 
     // Update on-screen HUD
     this._updateHUD();
+
+    // Camera trauma — continuous shake that decays over time
+    this._updateTrauma(dt);
 
     // Placeholder win condition: mission clock expires
     if (this._elapsed >= this._missionTime) {
@@ -255,6 +276,10 @@ class PilotGameScene extends Phaser.Scene {
       this._muzzleEmitter.setPosition(this._ship.x + 34, this._ship.y);
       this._muzzleEmitter.explode(6);
     }
+
+    // Muzzle light bloom
+    this._lighting.addMuzzleFlash(this._ship.x + 34, this._ship.y);
+    this._sound.fireWeapon();
   }
 
   // ==========================================================
@@ -324,8 +349,26 @@ class PilotGameScene extends Phaser.Scene {
     bolt.kill();
     cannon.health.takeDamage(BOLT_DAMAGE);
 
-    // Phaser camera shake: 150ms feedback on structure hit
-    this.cameras.main.shake(150, 0.008);
+    // Trauma-based shake on every hit
+    this._addTrauma(0.10);
+    this._sound.enemyHit(cannon.x, cannon.y);
+
+    // Small impact spark burst at the hit point
+    if (this._impactEmitter) {
+      this._impactEmitter.setPosition(cannon.x, cannon.y);
+      this._impactEmitter.explode(8);
+    }
+
+    // Large explosion effects when the cannon is destroyed
+    if (!cannon.health.isAlive()) {
+      this._lighting.addExplosionLight(cannon.x, cannon.y);
+      this._triggerExplosionZoom();
+      this._sound.explosion(cannon.x, cannon.y);
+      if (this._explosionEmitter) {
+        this._explosionEmitter.setPosition(cannon.x, cannon.y);
+        this._explosionEmitter.explode(30);
+      }
+    }
   }
 
   // Pair 2 — player bolt hits OrcSilo structure
@@ -335,7 +378,23 @@ class PilotGameScene extends Phaser.Scene {
     bolt.kill();
     silo.health.takeDamage(BOLT_DAMAGE);
 
-    this.cameras.main.shake(150, 0.008);
+    this._addTrauma(0.10);
+    this._sound.enemyHit(silo.x, silo.y);
+
+    if (this._impactEmitter) {
+      this._impactEmitter.setPosition(silo.x, silo.y);
+      this._impactEmitter.explode(8);
+    }
+
+    if (!silo.health.isAlive()) {
+      this._lighting.addExplosionLight(silo.x, silo.y);
+      this._triggerExplosionZoom();
+      this._sound.explosion(silo.x, silo.y);
+      if (this._explosionEmitter) {
+        this._explosionEmitter.setPosition(silo.x, silo.y);
+        this._explosionEmitter.explode(40);  // bigger structure → bigger blast
+      }
+    }
   }
 
   // Pair 3 — enemy bolt hits player ship
@@ -345,6 +404,8 @@ class PilotGameScene extends Phaser.Scene {
     bolt.kill();
     ship.takeDamage(1);
 
+    this._addTrauma(0.25);
+    this._sound.playerHit();
     // Screen flash red at low alpha — Phaser camera flash effect
     this.cameras.main.flash(200, 255, 0, 0, false);
   }
@@ -362,6 +423,17 @@ class PilotGameScene extends Phaser.Scene {
 
     ship.takeDamage(25); // missiles deal heavy damage
 
+    this._addTrauma(0.70);
+    this._lighting.addExplosionLight(ship.x, ship.y);
+    this._triggerExplosionZoom();
+    this._sound.explosion(ship.x, ship.y);
+    this._sound.playerHit();
+
+    if (this._explosionEmitter) {
+      this._explosionEmitter.setPosition(ship.x, ship.y);
+      this._explosionEmitter.explode(25);
+    }
+
     // Screen flash red — more intense than a bolt hit
     this.cameras.main.flash(300, 255, 0, 0, false);
   }
@@ -376,10 +448,17 @@ class PilotGameScene extends Phaser.Scene {
       interceptPos = proxy._missileOwner.hitMissileProxy(proxy);
     }
 
+    this._addTrauma(0.15);
+
     // Phaser particle burst at the interception point
     if (interceptPos && this._interceptEmitter) {
       this._interceptEmitter.setPosition(interceptPos.x, interceptPos.y);
       this._interceptEmitter.explode(12);
+    }
+
+    // Light flash at intercept point
+    if (interceptPos) {
+      this._lighting.addExplosionLight(interceptPos.x, interceptPos.y);
     }
   }
 
@@ -421,6 +500,32 @@ class PilotGameScene extends Phaser.Scene {
       quantity: 0,
       emitting: false,
       blendMode: 'ADD',
+    }).setDepth(20).setScrollFactor(1);
+
+    // ---- Impact sparks — small burst on every structure hit ----
+    this._impactEmitter = this.add.particles(0, 0, 'ship_trail', {
+      speed:    { min: 40,  max: 160 },
+      scale:    { start: 1.2, end: 0 },
+      alpha:    { start: 1.0, end: 0 },
+      tint:     [0xff8800, 0xffcc00, 0xffffff],
+      lifespan: 200,
+      quantity: 0,
+      emitting: false,
+      blendMode: 'ADD',
+    }).setDepth(18).setScrollFactor(1);
+
+    // ---- Voidheart explosion — large burst on enemy destruction ----
+    // Two tint groups: purplish-red for Voidheart ore, gold for shrapnel
+    this._explosionEmitter = this.add.particles(0, 0, 'ship_trail', {
+      speed:    { min: 60,  max: 300 },
+      scale:    { start: 2.0, end: 0 },
+      alpha:    { start: 1.0, end: 0 },
+      tint:     [0xaa2060, 0xc8901a, 0xff4400, 0xffffff],
+      lifespan: 600,
+      quantity: 0,
+      emitting: false,
+      blendMode: 'ADD',
+      gravityY:  80,
     }).setDepth(20).setScrollFactor(1);
   }
 
@@ -535,6 +640,57 @@ class PilotGameScene extends Phaser.Scene {
   }
 
   // ==========================================================
+  // CAMERA TRAUMA — continuous shake that decays over time
+  //
+  // addTrauma(amount)   — 0–1; clamps to [0,1]; stacks additively
+  // _updateTrauma(dt)   — call every frame; drives follow offset + decay
+  // ==========================================================
+
+  _addTrauma(amount) {
+    this._trauma = Math.min(1.0, this._trauma + amount);
+  }
+
+  _updateTrauma(dt) {
+    if (this._trauma <= 0) {
+      this._trauma = 0;
+      this.cameras.main.setFollowOffset(0, 0);
+      return;
+    }
+
+    // Intensity scales as trauma² for a natural, graduated feel
+    const intensity = this._trauma * this._trauma * 18; // px
+    const ox = (Math.random() * 2 - 1) * intensity;
+    const oy = (Math.random() * 2 - 1) * intensity;
+    this.cameras.main.setFollowOffset(ox, oy);
+
+    // Decay rate: 2.0 units per second — fully settled in ~0.5 s after a hard hit
+    this._trauma = Math.max(0, this._trauma - dt * 2.0);
+  }
+
+  // ==========================================================
+  // EXPLOSION ZOOM — brief 1.1× zoom on large explosions
+  // ==========================================================
+
+  _triggerExplosionZoom() {
+    // Kill any pending zoom tween so a rapid sequence doesn't compound
+    this.tweens.killTweensOf(this.cameras.main);
+    this.tweens.add({
+      targets:  this.cameras.main,
+      zoom:     1.1,
+      duration: 120,
+      ease:     'Power2',
+      onComplete: () => {
+        this.tweens.add({
+          targets:  this.cameras.main,
+          zoom:     1.0,
+          duration: 500,
+          ease:     'Power2',
+        });
+      },
+    });
+  }
+
+  // ==========================================================
   // GAME OVER
   // ==========================================================
 
@@ -542,13 +698,28 @@ class PilotGameScene extends Phaser.Scene {
     if (this._gameOver) return;
     this._gameOver = true;
 
-    // Slightly longer delay on defeat so the death animation can play
-    const delay = result === 'defeated' ? 800 : 400;
-    this.time.delayedCall(delay, () => {
-      this._cleanup();
-      // GameOverScene not yet built — return to main menu as placeholder
-      this.scene.start('MainMenuScene');
-    });
+    const score = Math.floor(this._elapsed * 10);
+
+    if (result === 'defeated') {
+      // Slow zoom in to 1.3× then fade to black — cinematic death sequence
+      this.tweens.add({
+        targets:  this.cameras.main,
+        zoom:     1.3,
+        duration: 900,
+        ease:     'Power2',
+      });
+      this.cameras.main.fade(900, 0, 0, 0);
+      this.cameras.main.once('camerafadeoutcomplete', () => {
+        this._cleanup();
+        this.scene.start('GameOverScene', { result: 'defeated', score, plane: this._planeConf });
+      });
+    } else {
+      // Victory — short delay then transition (no death animation needed)
+      this.time.delayedCall(400, () => {
+        this._cleanup();
+        this.scene.start('GameOverScene', { result: 'victory', score, plane: this._planeConf });
+      });
+    }
   }
 
   // ==========================================================
@@ -560,6 +731,10 @@ class PilotGameScene extends Phaser.Scene {
     if (this._input) {
       this._input.destroy();
       this._input = null;
+    }
+    if (this._lighting) {
+      this._lighting.destroy();
+      this._lighting = null;
     }
   }
 
