@@ -89,25 +89,48 @@ class EnemyManager {
   _generateBattlefield() {
     const H = this._groundY; // shorthand
 
-    // ---- OrcCannon positions ----
-    // Pass the shared enemyBolts group so each cannon fires Projectile orbs
-    // into the Phaser physics pool (enabling arcade overlap in PilotGameScene).
-    const cannonXs = [600, 1100, 1500, 1950, 2350, 2700, 3300, 3650, 4300, 4550];
-    cannonXs.forEach(worldX => {
-      const cannon = new OrcCannon(this._scene, worldX, H, this._enemyBolts);
-      this._enemies.push(cannon);
-      this._cannonGroup.add(cannon);
-    });
+    // ---- Build a sorted placement list from both enemy types ----
+    // Merge cannons and silos into one list sorted by worldX so we can
+    // verify spacing between ALL adjacent structures (not just same-type).
+    const placements = [
+      { type: 'OrcCannon', x: 600 },
+      { type: 'OrcSilo',   x: 900 },
+      { type: 'OrcCannon', x: 1100 },
+      { type: 'OrcCannon', x: 1500 },
+      { type: 'OrcSilo',   x: 1900 },
+      { type: 'OrcCannon', x: 1950 },
+      { type: 'OrcCannon', x: 2350 },
+      { type: 'OrcCannon', x: 2700 },
+      { type: 'OrcSilo',   x: 2900 },
+      { type: 'OrcCannon', x: 3300 },
+      { type: 'OrcCannon', x: 3650 },
+      { type: 'OrcSilo',   x: 4050 },
+      { type: 'OrcCannon', x: 4300 },
+      { type: 'OrcCannon', x: 4550 },
+    ];
 
-    // ---- OrcSilo positions ----
-    // Pass the shared missiles group so each silo activates invisible physics
-    // proxies (enabling arcade overlap in PilotGameScene).
-    const siloXs = [900, 1900, 2900, 4050];
-    siloXs.forEach(worldX => {
-      const silo = new OrcSilo(this._scene, worldX, H, this._missiles);
-      this._enemies.push(silo);
-      this._siloGroup.add(silo);
+    console.log('[EnemyManager] === PLACEMENT DEBUG START ===');
+    let prevX = null;
+    let prevType = null;
+    placements.forEach((p, i) => {
+      const gap = prevX !== null ? p.x - prevX : 'N/A';
+      console.log(`[EnemyManager] #${i} type=${p.type} centerX=${p.x} gap_from_prev=${gap} prevType=${prevType || 'none'}`);
+
+      if (p.type === 'OrcCannon') {
+        const cannon = new OrcCannon(this._scene, p.x, H, this._enemyBolts);
+        this._enemies.push(cannon);
+        this._cannonGroup.add(cannon);
+      } else {
+        const silo = new OrcSilo(this._scene, p.x, H, this._missiles);
+        this._enemies.push(silo);
+        this._siloGroup.add(silo);
+      }
+
+      prevX = p.x;
+      prevType = p.type;
     });
+    console.log(`[EnemyManager] === PLACEMENT DEBUG END === (${placements.length} enemies placed)`);
+    console.log('[EnemyManager] NOTE: using hardcoded position arrays — no cursor/jitter system found');
   }
 
   // ================================================================
