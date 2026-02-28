@@ -38,19 +38,16 @@ html, body {
 
 /* ============================================================
    THE GAME CANVAS
-   The canvas's pixel dimensions are set by JavaScript.
-   The CSS width/height are also set by JavaScript to scale
-   the canvas up or down to fit the screen while keeping the
-   correct 16:9 aspect ratio.
+   Phaser creates and manages the canvas element directly.
+   These rules apply to all canvas elements on the page.
    ============================================================ */
-#gameCanvas {
+canvas {
   display: block;
 
   /*
     image-rendering: pixelated keeps graphics sharp when the canvas is
-    scaled up. Without this, the browser applies blurry anti-aliasing
-    to the scaled image. Good for pixel art; may want to remove for
-    smooth high-resolution graphics.
+    scaled up by Phaser's Scale Manager. Without this, the browser applies
+    blurry anti-aliasing to the scaled image.
   */
   image-rendering: crisp-edges;   /* Firefox */
   image-rendering: pixelated;     /* Chrome / Safari */
