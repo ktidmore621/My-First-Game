@@ -67,11 +67,33 @@ class PlaneSelectScene extends Phaser.Scene {
     const cardsY   = 110;
     const startX   = (W - (this._cardW * 3 + cardGap * 2)) / 2;
 
-    // ---- Background — dark sci-fi briefing room ----
+    // ---- Background — same 4-band pixel-art sky as MainMenuScene ----
+    // (Visual Style Guide rules 1 & 3 — flat fillRect bands, no gradients)
+    const horizonY = Math.floor(H * 0.72);
+    const sky = this.add.graphics();
+    sky.fillStyle(0x07101f);
+    sky.fillRect(0, 0, W, Math.floor(horizonY * 0.35));
+    sky.fillStyle(0x0d1e38);
+    sky.fillRect(0, Math.floor(horizonY * 0.35), W, Math.floor(horizonY * 0.25));
+    sky.fillStyle(0x122848);
+    sky.fillRect(0, Math.floor(horizonY * 0.60), W, Math.floor(horizonY * 0.25));
+    sky.fillStyle(0x1e3a52);
+    sky.fillRect(0, Math.floor(horizonY * 0.85), W, horizonY - Math.floor(horizonY * 0.85));
+    // Warm amber horizon strip
+    sky.fillStyle(0x3a2010);
+    sky.fillRect(0, horizonY - 8, W, 8);
+    // Ground
+    sky.fillStyle(0x1e3310);
+    sky.fillRect(0, horizonY, W, H - horizonY);
+
+    // Semi-transparent dark overlay — keeps the briefing-room feel and
+    // ensures card text remains legible against the sky background
+    const overlay = this.add.graphics();
+    overlay.fillStyle(0x000000, 0.52);
+    overlay.fillRect(0, 0, W, H);
+
+    // Subtle sci-fi grid lines on top of the overlay
     const bg = this.add.graphics();
-    bg.fillStyle(0x0b1520);
-    bg.fillRect(0, 0, W, H);
-    // Subtle grid lines
     bg.lineStyle(1, 0x1e5082, 0.3);
     for (let gx = 0; gx < W; gx += 60) {
       bg.beginPath(); bg.moveTo(gx, 0); bg.lineTo(gx, H); bg.strokePath();
