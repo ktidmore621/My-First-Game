@@ -79,7 +79,7 @@ class InputSystem {
 
     // ---- Persistent Graphics for stick ring + knob visuals ----
     // Depth 90 puts it above gameplay objects but below buttons (95)
-    this._stickGfx = scene.add.graphics().setDepth(90);
+    this._stickGfx = scene.add.graphics().setDepth(90).setScrollFactor(0);
 
     // ---- Button hit regions in game coords (top-left origin) ----
     // Kept in sync with _buildButtons() positions.
@@ -191,7 +191,7 @@ class InputSystem {
    * Matches the pattern used by MainMenuScene._makeButton().
    */
   _makeButton(scene, cx, cy, w, h, label, bgColor, borderColor, textColor, fontSize) {
-    const container = scene.add.container(cx, cy).setDepth(95);
+    const container = scene.add.container(cx, cy).setDepth(95).setScrollFactor(0);
 
     const bg = scene.add.graphics();
     bg.fillStyle(bgColor, 0.85);

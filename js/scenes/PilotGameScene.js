@@ -140,7 +140,7 @@ class PilotGameScene extends Phaser.Scene {
     this._ship.setDepth(10);
 
     // Aim line — world-space red dashed line drawn from ship nose each frame
-    this._aimLineGfx = this.add.graphics().setDepth(9);
+    this._aimLineGfx = this.add.graphics().setDepth(35);
 
     // When the ship's HealthSystem hits zero it emits 'destroyed'
     this._ship.on('destroyed', () => this._triggerGameOver('defeated'));
@@ -235,6 +235,9 @@ class PilotGameScene extends Phaser.Scene {
     if ((aimMag > 0.1 || this._input.firePressed) && this._fireCooldown <= 0) {
       this._firePlayerBolt();
       this._fireCooldown = 0.15;
+      // Tint flash confirms firing — remove before release
+      this._ship.setTint(0xffffff);
+      this.time.delayedCall(50, () => { if (this._ship) this._ship.clearTint(); });
     }
 
     // Update all enemies (OrcCannons + OrcSilos via EnemyManager)
@@ -680,10 +683,13 @@ class PilotGameScene extends Phaser.Scene {
     const noseY   = this._ship.y + Math.sin(shipRad) * 32;
 
     // Draw dashed line: 8px dash / 5px gap, 120px total
+    // Active aim (right stick deflected) = 3px full alpha; passive direction = 2px dim
     const DASH  = 8;
     const GAP   = 5;
     const TOTAL = 120;
-    this._aimLineGfx.lineStyle(1, 0xff2222, 0.85);
+    const aimWidth = aMag > 0.1 ? 3 : 2;
+    const aimAlpha = aMag > 0.1 ? 1.0 : 0.6;
+    this._aimLineGfx.lineStyle(aimWidth, 0xff4400, aimAlpha);
     let d = 0;
     let drawSeg = true;
     while (d < TOTAL) {
