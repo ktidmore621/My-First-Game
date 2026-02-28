@@ -24,25 +24,36 @@ My-First-Game/
 │   └── style.css                 ← Canvas scaling, mobile-friendly, landscape orientation
 │
 └── js/
-    ├── main.js                   ← Starts the game (runs last)
+    ├── main.js                   ← Starts the Phaser game (runs last)
     │
-    ├── engine/
-    │   ├── GameLoop.js           ← requestAnimationFrame loop; calls update + render at ~60fps
-    │   └── StateManager.js       ← Screen/state stack (change, push, pop)
+    ├── systems/
+    │   └── InputSystem.js        ← Phaser-based input: virtual thumbsticks, buttons, keyboard
     │
-    ├── input/
-    │   └── InputHandler.js       ← Touch + mouse; left/right virtual thumbsticks; tap detection
+    ├── scenes/                   ← Active Phaser scenes (replacing the old canvas states)
+    │   ├── MainMenuScene.js      ← Title screen; PILOT MODE / GUNNER MODE buttons
+    │   ├── PlaneSelectScene.js   ← Card-based plane chooser (3 planes, 4 stat bars each)
+    │   └── PilotGameScene.js     ← Gameplay scene (placeholder; full impl next session)
+    │
+    ├── engine/                   ← Legacy canvas engine (superseded by Phaser)
+    │   ├── GameLoop.js
+    │   └── StateManager.js
+    │
+    ├── input/                    ← Legacy input (superseded by InputSystem.js)
+    │   └── InputHandler.js
     │
     ├── entities/
     │   ├── HealthSystem.js       ← Reusable health/damage system with callbacks
-    │   └── Plane.js              ← Player plane with 4 stats, velocity, health, placeholder render
+    │   ├── Plane.js              ← Player plane with 4 stats, velocity, health
+    │   ├── OrcCannon.js          ← Ground enemy: pixel-art cannon with explosion sequence
+    │   ├── OrcSilo.js            ← Ground enemy: missile silo
+    │   └── Projectile.js        ← Bullet/missile entity
     │
-    └── states/
-        ├── MainMenuState.js      ← Title screen; PILOT MODE / GUNNER MODE buttons
-        ├── PlaneSelectState.js   ← Card-based plane chooser (3 planes, 4 stat bars each)
-        ├── PilotGameState.js     ← Pilot gameplay: movement, scrolling ground, aim, HUD
-        ├── GunnerGameState.js    ← Gunner gameplay: rotating gun aim, FIRE button, HUD
-        └── GameOverState.js      ← Result screen; PLAY AGAIN / MAIN MENU buttons
+    └── states/                   ← Legacy canvas states (superseded by Phaser scenes)
+        ├── MainMenuState.js
+        ├── PlaneSelectState.js
+        ├── PilotGameState.js
+        ├── GunnerGameState.js
+        └── GameOverState.js
 ```
 
 ---
@@ -51,10 +62,10 @@ My-First-Game/
 
 The order of `<script>` tags in `index.html` is **critical** — there is no module system. Files must be loaded after their dependencies:
 
-1. **Foundation** (no dependencies): `HealthSystem.js`, `StateManager.js`
-2. **Systems** (depend on foundation): `GameLoop.js`, `InputHandler.js`, `Plane.js`
-3. **Game Screens** (depend on systems): All state files (`MainMenuState.js` → `GameOverState.js`)
-4. **Entry Point** (ties everything together): `main.js`
+1. **Phaser CDN** — loaded first; everything depends on the global `Phaser` object
+2. **Systems** (depend only on Phaser): `InputSystem.js`
+3. **Phaser Scenes** (depend on systems): `MainMenuScene.js`, `PlaneSelectScene.js`, `PilotGameScene.js`
+4. **Entry Point** (creates the Phaser.Game): `main.js`
 
 When adding a new script, add its `<script>` tag in the right position — after everything it depends on, and before anything that depends on it.
 
@@ -119,17 +130,56 @@ Uses `requestAnimationFrame`. Calculates delta time (`dt`) in seconds each frame
 - `pop()` — go back to the previous state
 - `isActive(StateClass)` — check if a specific state type is current
 
-### InputHandler (`js/input/InputHandler.js`)
-- `input.leftStick`  — `{ active, x, y, baseX, baseY }` — x/y range: -1 to +1
-- `input.rightStick` — same shape as leftStick
-- `input.tapsThisFrame` — array of `{ x, y }` tap positions in game coordinates
-- `input.wasTappedInRegion(x, y, w, h)` — returns true if any tap was inside that rectangle
-- `input.clearTaps()` — **call this at the end of every state's `update()`**
-- `input.renderSticks(ctx)` — draws the thumbstick visuals; call from `render()`
+### InputSystem (`js/systems/InputSystem.js`)
+Phaser-based input system that replaces the legacy `InputHandler`. Instantiate inside a Phaser scene's `create()`, then call `update()` at the top and `clearTaps()` at the bottom of each `update()` tick.
 
-Internal constants: `STICK_RADIUS = 65` (max thumb travel), `TAP_MAX_DISTANCE = 15` (drag threshold).
+```javascript
+// In a Phaser scene:
+create() {
+  this.inputSys = new InputSystem(this);
+}
+update(time, delta) {
+  this.inputSys.update();           // keyboard synthesis + redraw sticks
+  // ... read input ...
+  this.inputSys.clearTaps();        // reset one-frame flags
+}
+```
 
-Touch events use the left/right screen halves for left/right sticks. Mouse events work the same way (for desktop testing). Multi-touch is tracked by `touch.identifier` so each finger is independent.
+**Stick properties** (x/y range −1 to +1):
+- `input.leftStick`  — `{ active, x, y, baseX, baseY }`
+- `input.rightStick` — same shape
+
+**One-shot button flags** (true for one frame, reset by `clearTaps()`):
+- `input.weaponSelectPressed`
+- `input.evadePressed`
+- `input.firePressed`
+
+**Tap API** (mirrors legacy InputHandler):
+- `input.tapsThisFrame` — `[{ x, y }]` in game coordinates
+- `input.wasTappedInRegion(x, y, w, h)` — rectangle hit test
+- `input.clearTaps()` — **call at the end of every scene `update()`**
+- `input.renderSticks(ctx)` — no-op; kept for API parity
+
+**Touch/pointer:** left half of screen (x < 480) drives the left stick; right half drives the right stick. A quick release (< 15 px travel) registers as a tap.
+
+**Keyboard (desktop testing):**
+- WASD / Arrow keys → left stick (continuous while held)
+- IJKL → right stick (continuous while held)
+- Space → `firePressed`, Shift → `evadePressed`, Q or E → `weaponSelectPressed`
+
+**On-screen buttons** (Phaser Containers, depth 95, always in scene display list):
+- `input.weaponSelectBtn` — bottom centre (480, 495), 200 × 48 px
+- `input.evadeBtn` — bottom right (868, 495), 140 × 48 px
+- `input.fireBtn` — above EVADE (868, 435), 140 × 48 px
+
+Each button scales to 0.9× on press via a brief tween. Use `.setVisible(false)` to hide buttons not relevant to the current mode.
+
+Internal constants: `INPUT_STICK_RADIUS = 65`, `INPUT_TAP_MAX_DIST = 15`.
+
+---
+
+### InputHandler (`js/input/InputHandler.js`) — **LEGACY**
+Original canvas-based input handler. Superseded by `InputSystem.js`. Kept for reference; not loaded by `index.html` for Phaser scenes.
 
 ### HealthSystem (`js/entities/HealthSystem.js`)
 ```javascript
@@ -323,17 +373,14 @@ These are the recommended next steps to turn this foundation into a playable gam
 ## What AI Assistants Should Know
 
 - **No build step** — edit files, refresh browser, that's it
-- **No external libraries** — keep it dependency-free unless there's a compelling reason
-- **`_drawButton` is a global helper** defined at the bottom of `MainMenuState.js` — all state files can call it since it loads first among the states
-- **`_drawHUDButton` is a file-scoped helper** defined at the bottom of `PilotGameState.js` — it is only available within that file; do not call it from other states (use `_drawButton` or define a local equivalent instead). It supports multiline labels via `\n` in the label string.
-- **`_drawPlaceholderEnemy` is a file-scoped helper** defined at the bottom of `PilotGameState.js` — draws a red placeholder box + label above a position; only used there for the static AA Gun / Missile / Base markers
-- **Script load order matters** — `index.html` loads files in dependency order; add new scripts in the right place
-- **gameData is the inter-state bus** — store anything that needs to survive a state transition there
-- **All coordinates are in game space (960×540)** — never use `window.innerWidth/Height` in game logic
-- **`input.clearTaps()` must be called at the end of every `update()`** — failing to do so causes taps to persist across frames
-- **`ctx.save()` / `ctx.restore()` around every transform** — prevents cascading matrix bugs
-- **Death callbacks use `setTimeout(800ms)`** — brief delay before transitioning to GameOverState; `_gameOverPending` flag prevents duplicate triggers
-- **`ctx.imageSmoothingEnabled = false`** must be the first line of every `render()` method — now set in all render methods: `PilotGameState`, `GunnerGameState`, `MainMenuState`, `PlaneSelectState`, `GameOverState`, and `Plane.render()`. Any new `render()` method must continue this pattern.
-- **`window.game`** is exposed in `main.js` for browser console debugging: `game.stateManager`, `game.input`, `game.gameLoop`, `game.gameData`
+- **Phaser 3.60** is loaded via CDN in `index.html`; all scenes extend `Phaser.Scene`
+- **No external libraries beyond Phaser** — keep it dependency-free unless there's a compelling reason
+- **Script load order matters** — `index.html` loads `InputSystem.js` before scene scripts; add new scripts in the right place
+- **All coordinates are in game space (960×540)** — Phaser's Scale.FIT handles CSS scaling; never use `window.innerWidth/Height` in game logic
+- **InputSystem usage:** call `inputSys.update()` at the top of every scene `update()` and `inputSys.clearTaps()` at the bottom — failing to call `clearTaps()` causes button flags and taps to persist across frames
+- **InputSystem buttons are always in the scene display list** — hide irrelevant buttons with `.setVisible(false)` in `create()`; do not destroy and recreate them
+- **Keyboard-driven sticks have no visual** — `_drawSticks()` only renders sticks driven by touch/pointer; keyboard input is silent (no ring/knob drawn)
+- **`window.game`** is exposed in `main.js` for browser console debugging: `game.scene` gives access to the Phaser Scene Manager
+- **Legacy files** (`js/engine/`, `js/input/`, `js/states/`) are not loaded by `index.html`; they remain as reference only
 - Avoid adding unrequested scaffolding, dependencies, or "improvements" beyond the task at hand
 - Update this `CLAUDE.md` whenever the folder structure, conventions, or systems change significantly
