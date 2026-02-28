@@ -847,11 +847,11 @@ class PilotGameState {
       for (let by = bodyStart; by < H; by += 2) {
         const bandY = by - bodyStart;
         if (bandY % 6 === 0) {
-          ctx.fillStyle = '#1f1406'; // accent — deep stratum line
+          ctx.fillStyle = '#2a3828'; // accent — deep stratum line
         } else if (Math.floor(bandY / 2) % 2 === 0) {
-          ctx.fillStyle = '#2a1a0c'; // primary
+          ctx.fillStyle = '#3a4a32'; // primary
         } else {
-          ctx.fillStyle = '#251708'; // secondary
+          ctx.fillStyle = '#344530'; // secondary
         }
         ctx.fillRect(sx, by, STEP, Math.min(2, H - by));
       }
@@ -864,16 +864,16 @@ class PilotGameState {
         const cliffBottom = prevSurfaceY;
 
         // Top 4 px of cliff: surface soil layer
-        ctx.fillStyle = '#2a1a0c';
+        ctx.fillStyle = '#3a4a32';
         ctx.fillRect(sx, cliffTop, STEP, Math.min(4, cliffH));
 
         if (cliffH > 4) {
           // Next 6 px: compressed mid-layer with horizontal crack lines every 2 px
           const midStart = cliffTop + 4;
           const midH     = Math.min(6, cliffH - 4);
-          ctx.fillStyle  = '#1a0e06';
+          ctx.fillStyle  = '#2a3828';
           ctx.fillRect(sx, midStart, STEP, midH);
-          ctx.fillStyle  = '#0d0804'; // crack lines — slightly darker
+          ctx.fillStyle  = '#1a2818'; // crack lines — slightly darker
           for (let cy = midStart; cy < midStart + midH; cy += 2) {
             ctx.fillRect(sx, cy, STEP, 1);
           }
@@ -883,13 +883,13 @@ class PilotGameState {
           // Remaining depth: deep bedrock with scattered Voidheart mineral pixels
           const bedStart = cliffTop + 10;
           const bedH     = cliffH - 10;
-          ctx.fillStyle  = '#0d0804';
+          ctx.fillStyle  = '#1a2818';
           ctx.fillRect(sx, bedStart, STEP, bedH);
           // Dark purple mineral flecks — deterministic from worldX so they
           // stay fixed to the terrain as the camera scrolls.
           const mHash = (worldX * 7 + 43) % 11;
           if (mHash < 2) {
-            ctx.fillStyle = '#1a0814'; // Voidheart contamination
+            ctx.fillStyle = '#1a0018'; // Voidheart contamination
             ctx.fillRect(
               sx + (mHash % STEP),
               bedStart + Math.floor(bedH * 0.4),
@@ -899,7 +899,7 @@ class PilotGameState {
         }
 
         // 2 px shadow band at the base of the raised section — anchors the cliff
-        ctx.fillStyle = '#080604';
+        ctx.fillStyle = '#0d1a0a';
         ctx.fillRect(sx, cliffBottom, STEP, 2);
       }
 
@@ -907,21 +907,21 @@ class PilotGameState {
       // These bands sit at the very surface, overwriting any cliff strata at the
       // top so the surface edge always reads cleanly.
       let hy = surfaceY;
-      ctx.fillStyle = '#4a3a20'; // Layer 1 — 1 px bright alien horizon glow
+      ctx.fillStyle = '#5a6a4a'; // Layer 1 — 1 px bright alien horizon glow
       ctx.fillRect(sx, hy, STEP, 1); hy += 1;
-      ctx.fillStyle = '#3a2a14'; // Layer 2 — 2 px warm ridge tone
+      ctx.fillStyle = '#4a5a3a'; // Layer 2 — 2 px warm ridge tone
       ctx.fillRect(sx, hy, STEP, 2); hy += 2;
-      ctx.fillStyle = '#2a1a0c'; // Layer 3 — 2 px mid surface
+      ctx.fillStyle = '#3a4a32'; // Layer 3 — 2 px mid surface
       ctx.fillRect(sx, hy, STEP, 2); hy += 2;
-      ctx.fillStyle = '#1a0e06'; // Layer 4 — 3 px shadow band
+      ctx.fillStyle = '#2a3828'; // Layer 4 — 3 px shadow band
       ctx.fillRect(sx, hy, STEP, 3); hy += 3;
-      ctx.fillStyle = '#0d0804'; // Layer 5 — 4 px deep shadow
+      ctx.fillStyle = '#1a2818'; // Layer 5 — 4 px deep shadow
       ctx.fillRect(sx, hy, STEP, 4); // hy now == surfaceY + 12 == bodyStart
 
       // 1 px highlight at the very top of every raised section — the ridge
       // catches the alien light at a slightly warmer tone than flat ground.
       if (cliffH > 3) {
-        ctx.fillStyle = '#3a2a14';
+        ctx.fillStyle = '#4a5a3a';
         ctx.fillRect(sx, surfaceY, STEP, 1);
       }
 
@@ -930,16 +930,16 @@ class PilotGameState {
       // than its neighbours, creating micro-variation across the surface layer.
       const nHash = (worldX * 3 + 17) % 7;
       if (nHash < 3) {
-        ctx.fillStyle = (nHash < 1) ? '#3a2a14' : '#1a0e06';
+        ctx.fillStyle = (nHash < 1) ? '#4a5a3a' : '#2a3828';
         ctx.fillRect(sx + 1, surfaceY + 6, 1, 1);
       }
 
       // ---- SCATTERED SURFACE ROCKS ----
-      // 1×1 and 2×1 px pixels in grey-brown tones placed at deterministic but
+      // 1×1 and 2×1 px pixels in grey-green tones placed at deterministic but
       // varied intervals — they are world-space so they scroll correctly.
       const rHash = (worldX * 13 + 7) % 23;
       if (rHash < 4) {
-        const rockColors = ['#3a2a1a', '#4a3a28', '#2a1e10'];
+        const rockColors = ['#4a5a40', '#3a4a34', '#2a3828'];
         ctx.fillStyle    = rockColors[rHash % 3];
         const ry         = surfaceY + 4 + (rHash % 4);
         if (rHash < 2) {
@@ -1295,7 +1295,7 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
     const lightSide = dr() > 0.5 ? 1 : -1;         // which crater wall catches alien light
 
     // ---- Pre-compute outer debris — rock pixels (8-12 × 1px or 2px) ----
-    const DEBRIS_COLORS = ['#3a2a1a', '#4a3822', '#2a1e12'];
+    const DEBRIS_COLORS = ['#4a5a40', '#3a4a34', '#2a3828'];
     const debris = [];
     const numDebris = 8 + Math.floor(dr() * 5);
     for (let i = 0; i < numDebris; i++) {
@@ -1376,48 +1376,48 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
         const cy = Math.floor(py);
 
         // === OUTER DEBRIS FIELD ===
-        // Rock pixels (1×1 and 2×2 in varied earthy tones)
+        // Rock pixels (1×1 and 2×2 in varied grey-green tones)
         for (const d of f.debris) {
           ctx.fillStyle = d.col;
           ctx.fillRect(cx + d.dx, cy + d.dy, d.w, d.h);
         }
         // Displaced earth chunks (4×3 in surface soil tone pushed outward from rim)
-        ctx.fillStyle = '#4a3820';
+        ctx.fillStyle = '#4a5a40';
         for (const c of f.chunks) {
           ctx.fillRect(cx + c.dx, cy + c.dy, 4, 3);
         }
         // Dust streaks — 1-px lines in 4 directions, slightly lighter than ground
-        ctx.fillStyle = '#5e4a28';
+        ctx.fillStyle = '#5a6a4a';
         for (const d of f.dusts) {
           ctx.fillRect(cx + d.x, cy + d.y, d.w, d.h);
         }
 
         // === RAISED RIM ===
         // Outer rim base shadow — 1-px border where raised earth meets surface
-        ctx.fillStyle = '#1a0e06';
+        ctx.fillStyle = '#2a3828';
         ctx.fillRect(cx - f.W2 - 1, cy - f.H2 - 1, f.W + 2, f.H + 2);
         // Raised rim body (3-px wide lip, displaced earth)
-        ctx.fillStyle = '#3a2814';
+        ctx.fillStyle = '#3a4a32';
         ctx.fillRect(cx - f.W2, cy - f.H2, f.W, f.H);
         // Inner rim edge highlight — 1-px catching alien light at the top+left boundary
-        ctx.fillStyle = '#4a3820';
+        ctx.fillStyle = '#4a5a40';
         ctx.fillRect(cx - f.W2 + 3, cy - f.H2 + 2, f.iW, 1); // top inner edge
         ctx.fillRect(cx - f.W2 + 2, cy - f.H2 + 3, 1, f.iH); // left inner edge
 
         // === CRATER INTERIOR — 4 DEPTH LAYERS ===
         // Drawn as nested inward rectangles; smaller craters only get 1-2 layers.
-        ctx.fillStyle = '#1a0e08'; // outer interior — disturbed deep soil
+        ctx.fillStyle = '#1a2818'; // outer interior — disturbed deep soil
         ctx.fillRect(cx - f.W2 + 3, cy - f.H2 + 3, f.iW, f.iH);
         if (f.iW > 4 && f.iH > 4) {
-          ctx.fillStyle = '#120a06'; // mid interior — compressed impact zone
+          ctx.fillStyle = '#121e0e'; // mid interior — compressed impact zone
           ctx.fillRect(cx - f.W2 + 5, cy - f.H2 + 5, f.iW - 4, f.iH - 4);
         }
         if (f.iW > 8 && f.iH > 8) {
-          ctx.fillStyle = '#0d0804'; // inner zone — deepest exposed rock
+          ctx.fillStyle = '#0d1a0a'; // inner zone — deepest exposed rock
           ctx.fillRect(cx - f.W2 + 7, cy - f.H2 + 7, f.iW - 8, f.iH - 8);
         }
         if (f.iW > 12 && f.iH > 12) {
-          ctx.fillStyle = '#080402'; // central pit — near-black deepest point
+          ctx.fillStyle = '#0d1a0a'; // central pit — near-black deepest point
           ctx.fillRect(cx - f.W2 + 9, cy - f.H2 + 9, f.iW - 12, f.iH - 12);
         }
 
@@ -1426,14 +1426,14 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
         const intT = cy - f.H2 + 3; // interior top  (screen y)
 
         // Directional alien light — one wall is 1 tone lighter than the opposite
-        ctx.fillStyle = '#241210';
+        ctx.fillStyle = '#2a3828';
         if (f.lightSide > 0) {
           ctx.fillRect(cx + f.W2 - 4, intT, 1, f.iH); // right wall lighter
         } else {
           ctx.fillRect(intL,           intT, 1, f.iH); // left wall lighter
         }
-        // Horizontal crack lines every 3 rows (#0d0804 on the interior)
-        ctx.fillStyle = '#0d0804';
+        // Horizontal crack lines every 3 rows (#0d1a0a on the interior)
+        ctx.fillStyle = '#0d1a0a';
         for (const crack of f.cracks) {
           ctx.fillRect(intL + crack.rx, intT + crack.ry, crack.len, 1);
         }
@@ -1480,7 +1480,7 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
     features.push({
       x: fx, y: fy, w: fw, h: fh,
       draw(ctx, px, py, f) {
-        ctx.fillStyle = '#0e0903';
+        ctx.fillStyle = '#0d1a0a';
         ctx.fillRect(Math.floor(px - f.w / 2), Math.floor(py - f.h / 2), f.w, f.h);
       },
     });
@@ -1516,7 +1516,7 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
     features.push({
       x: fx, y: fy,
       draw(ctx, px, py) {
-        ctx.fillStyle = '#38281a';
+        ctx.fillStyle = '#2a3828';
         ctx.fillRect(px - 9, py - 4, 7, 5);
         ctx.fillRect(px + 0, py - 6, 5, 5);
         ctx.fillRect(px + 6, py - 3, 8, 5);
@@ -1597,7 +1597,7 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
         // === SURFACE GLOW — drawn first (behind the crack) ===
         // Covers a 3-segment span centred on the vein's midpoint.
         const midSeg = f.segments[f.midIdx];
-        ctx.fillStyle = '#1a0018';
+        ctx.fillStyle = '#1a0a18'; // glow halo reads clearly against #3a4a32 ground
         ctx.fillRect(
           ox + midSeg.sx - glowW,
           oy + midSeg.dy - glowW,
@@ -1605,7 +1605,7 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
           3 + glowW * 2);
 
         // === SURFACE STAINING — 1px discoloration band on each side ===
-        ctx.fillStyle = '#1a0818';
+        ctx.fillStyle = '#2a1828'; // more visible against new grey-green surface
         for (const seg of f.segments) {
           ctx.fillRect(ox + seg.sx, oy + seg.dy - 1, f.SEG_W, 1); // above
           ctx.fillRect(ox + seg.sx, oy + seg.dy + 3, f.SEG_W, 1); // below core
@@ -1738,27 +1738,33 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
         const left = Math.floor(px - f.baseW / 2);
         const top  = Math.floor(py - f.baseH / 2);
 
-        // === POOL BASE — 4-5 overlapping rects ===
-        ctx.fillStyle = '#0a0014';
+        // === POOL GLOW HALO — dark green aura 2px wide around pool ===
+        ctx.fillStyle = '#0a2a00';
+        for (const r of f.rects) {
+          ctx.fillRect(left + r.dx - 2, top + r.dy - 2, r.w + 4, r.h + 4);
+        }
+
+        // === POOL BASE — 4-5 overlapping rects, bright acidic green palette ===
+        ctx.fillStyle = '#0a1a00';
         for (const r of f.rects) {
           ctx.fillRect(left + r.dx, top + r.dy, r.w, r.h);
         }
 
         // Inner darkest zone (deepest center)
-        ctx.fillStyle = '#060008';
+        ctx.fillStyle = '#061200';
         ctx.fillRect(
           left + Math.floor((f.baseW - f.innerW) / 2),
           top  + Math.floor((f.baseH - f.innerH) / 2),
           f.innerW, f.innerH);
 
-        // 1px edge border on the base rect
-        ctx.fillStyle = '#1a0028';
+        // 1px edge border on the base rect — liquid meeting alien rock
+        ctx.fillStyle = '#1a3a00';
         ctx.fillRect(left,                top,                f.baseW, 1); // top
         ctx.fillRect(left,                top + f.baseH - 1, f.baseW, 1); // bottom
         ctx.fillRect(left,                top,                1, f.baseH); // left
         ctx.fillRect(left + f.baseW - 1, top,                1, f.baseH); // right
 
-        // === SURFACE HIGHLIGHTS ===
+        // === SURFACE HIGHLIGHTS — bright acidic green, impossible to miss ===
         for (const h of f.highlights) {
           let hx = left + h.bx;
           let hy = top  + h.by;
@@ -1771,11 +1777,12 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
           hx = Math.max(left + 1, Math.min(left + f.baseW - 2, hx));
           hy = Math.max(top  + 1, Math.min(top  + f.baseH - 2, hy));
 
-          let hCol = '#2a0040';
+          // Animated drifting: dimmer green; static: bright acidic green
+          let hCol = h.animated ? '#33cc00' : '#44ff00';
           if (h.pulser) {
-            // Occasional brighter pulse as if something moves beneath
+            // Occasional bright flash suggesting movement beneath
             const bright = (Math.sin(t * 0.71 * Math.PI * 2 + 1.57) + 1) / 2;
-            hCol = bright > 0.88 ? '#4a0060' : '#2a0040';
+            hCol = bright > 0.88 ? '#88ff44' : '#33cc00';
           }
           ctx.fillStyle = hCol;
           ctx.fillRect(hx, hy, 1, 1);
@@ -1788,15 +1795,16 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
           const eqY = top  + Math.floor(f.baseH / 2) + eq.edy;
 
           // Dark angular machine silhouette breaking the pool surface
-          ctx.fillStyle = '#1a1208';
+          // Warm dark metal, clearly distinct from the green pool
+          ctx.fillStyle = '#1a1808';
           ctx.fillRect(eqX, eqY, eq.eW, eq.eH);
           // Rust highlight along the right edge
-          ctx.fillStyle = '#3a1808';
+          ctx.fillStyle = '#3a2808';
           ctx.fillRect(eqX + eq.eW - 1, eqY, 1, eq.eH);
 
           // Bubbles: 3 × 1px rising upward from the equipment, staggered phases
           const RISE = 10; // px of total rise before wrapping
-          ctx.fillStyle = '#2a0040';
+          ctx.fillStyle = '#22aa00';
           for (const b of eq.bubbles) {
             const riseAmt = ((t * b.speed + b.phase * RISE) % RISE + RISE) % RISE;
             ctx.fillRect(eqX + Math.floor(eq.eW / 2) + b.bdx, eqY - Math.floor(riseAmt), 1, 1);
@@ -1857,8 +1865,19 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
         const lx = Math.floor(px - f.PIT_W / 2);
         const ty = Math.floor(py); // terrain surface = top rim of pit
 
+        // === BRIGHT OUTLINE — 1px #8a9a78 separator so pit reads as equipment ===
+        ctx.fillStyle = '#8a9a78';
+        ctx.fillRect(lx - 1, ty - 3, f.PIT_W + 2, f.PIT_D + 4);
+
+        // === IDENTIFICATION LABEL — 8px dark metal plate with 2 rivets ===
+        ctx.fillStyle = '#2a2820';
+        ctx.fillRect(lx + Math.floor(f.PIT_W / 2) - 4, ty - 8, 8, 3);
+        ctx.fillStyle = '#8a9a78';
+        ctx.fillRect(lx + Math.floor(f.PIT_W / 2) - 3, ty - 7, 1, 1); // left rivet
+        ctx.fillRect(lx + Math.floor(f.PIT_W / 2) + 2, ty - 7, 1, 1); // right rivet
+
         // === PIT WALL STRATA — 1px horizontal bands, 3 geological tones ===
-        const strataTones = ['#1a0c06', '#160a04', '#1e1006'];
+        const strataTones = ['#1a2818', '#121e0e', '#1a2818'];
         for (let d = 0; d < f.PIT_D; d++) {
           ctx.fillStyle = strataTones[d % 3];
           ctx.fillRect(lx + f.BEAM_W, ty + d, f.PIT_W - f.BEAM_W * 2, 1);
@@ -1866,13 +1885,13 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
 
         // === PIT FLOOR — exposed bedrock, alternating 1px rows ===
         for (let row = 0; row < 4; row++) {
-          ctx.fillStyle = row % 2 === 0 ? '#0d0804' : '#0a0602';
+          ctx.fillStyle = row % 2 === 0 ? '#0d1a0a' : '#0a1200';
           ctx.fillRect(lx + f.BEAM_W, ty + f.PIT_D - 4 + row, f.PIT_W - f.BEAM_W * 2, 1);
         }
 
         // === FLOOR DEBRIS — rock pixels and purplish-red ore fragments ===
         for (const d of f.pitDebris) {
-          ctx.fillStyle = d.isOre ? '#3a0828' : '#3a2a1a';
+          ctx.fillStyle = d.isOre ? '#3a0828' : '#3a4a34';
           ctx.fillRect(lx + d.rx, ty + f.PIT_D - 3, 2, 1);
         }
 
@@ -1895,19 +1914,25 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
 
         // === REINFORCED METAL BEAM SUPPORTS — left and right sides ===
         // Left beam
-        ctx.fillStyle = '#1a1810'; // dark salvage metal body
+        ctx.fillStyle = '#2a2820'; // primary salvage metal body
         ctx.fillRect(lx, ty, f.BEAM_W, f.PIT_D);
-        ctx.fillStyle = '#2e2c22'; // 1px highlight on outer (left) edge
+        ctx.fillStyle = '#4a4840'; // 1px highlight on outer (left) edge
         ctx.fillRect(lx, ty, 1, f.PIT_D);
-        ctx.fillStyle = '#0c0a08'; // 1px shadow on inner (right) edge
+        ctx.fillStyle = '#1a1810'; // 1px shadow on inner (right) edge
         ctx.fillRect(lx + f.BEAM_W - 1, ty, 1, f.PIT_D);
+        // Rust accent on left beam
+        ctx.fillStyle = '#6a3010';
+        ctx.fillRect(lx, ty + Math.floor(f.PIT_D * 0.4), 2, 2);
         // Right beam
-        ctx.fillStyle = '#1a1810';
+        ctx.fillStyle = '#2a2820';
         ctx.fillRect(lx + f.PIT_W - f.BEAM_W, ty, f.BEAM_W, f.PIT_D);
-        ctx.fillStyle = '#2e2c22';
+        ctx.fillStyle = '#4a4840';
         ctx.fillRect(lx + f.PIT_W - f.BEAM_W, ty, 1, f.PIT_D);
-        ctx.fillStyle = '#0c0a08';
+        ctx.fillStyle = '#1a1810';
         ctx.fillRect(lx + f.PIT_W - 1, ty, 1, f.PIT_D);
+        // Rust accent on right beam
+        ctx.fillStyle = '#6a3010';
+        ctx.fillRect(lx + f.PIT_W - 3, ty + Math.floor(f.PIT_D * 0.6), 2, 2);
 
         // === WARNING MARKINGS on rim — alternating 2px dark-yellow and black ===
         // Matches OrcSilo hazard stripe palette (#886600 / #181410).
@@ -1958,21 +1983,32 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
         const lx  = Math.floor(px - f.RIG_W / 2);
         const bay = Math.floor(py); // base Y — terrain surface = bottom of rig
 
-        // === MAIN BODY FRAME — dark salvage metal ===
-        ctx.fillStyle = '#1e1c14';
+        // === BRIGHT OUTLINE — 1px #8a9a78 separator so rig reads as equipment ===
+        ctx.fillStyle = '#8a9a78';
+        ctx.fillRect(lx - 1, bay - f.RIG_H - 13, f.RIG_W + 2, f.RIG_H + 14);
+
+        // === IDENTIFICATION LABEL — 8px dark metal plate with 2 rivets ===
+        ctx.fillStyle = '#2a2820';
+        ctx.fillRect(lx + Math.floor(f.RIG_W / 2) - 4, bay - f.RIG_H - 16, 8, 3);
+        ctx.fillStyle = '#8a9a78';
+        ctx.fillRect(lx + Math.floor(f.RIG_W / 2) - 3, bay - f.RIG_H - 15, 1, 1); // left rivet
+        ctx.fillRect(lx + Math.floor(f.RIG_W / 2) + 2, bay - f.RIG_H - 15, 1, 1); // right rivet
+
+        // === MAIN BODY FRAME — primary salvage metal ===
+        ctx.fillStyle = '#2a2820';
         ctx.fillRect(lx, bay - f.RIG_H, f.RIG_W, f.RIG_H);
         // Top surface highlight
-        ctx.fillStyle = '#32302a';
+        ctx.fillStyle = '#4a4840';
         ctx.fillRect(lx, bay - f.RIG_H, f.RIG_W, 1);
         // Base shadow row
-        ctx.fillStyle = '#0a0a06';
+        ctx.fillStyle = '#1a1810';
         ctx.fillRect(lx, bay - 1, f.RIG_W, 1);
         // Right edge shadow
-        ctx.fillStyle = '#0e0c08';
+        ctx.fillStyle = '#1a1810';
         ctx.fillRect(lx + f.RIG_W - 1, bay - f.RIG_H, 1, f.RIG_H);
 
         // === PANEL SEAMS — 1px divider lines creating structural sections ===
-        ctx.fillStyle = '#0e0c08';
+        ctx.fillStyle = '#1a1810';
         ctx.fillRect(lx + 12, bay - f.RIG_H, 1, f.RIG_H); // left vertical seam
         ctx.fillRect(lx + 24, bay - f.RIG_H, 1, f.RIG_H); // right vertical seam
         ctx.fillRect(lx,      bay - 14,       f.RIG_W, 1); // horizontal mid seam
@@ -1983,15 +2019,20 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
          [11, -(f.RIG_H - 1)], [23, -(f.RIG_H - 1)]].forEach(([rx, ry]) => {
           ctx.fillStyle = '#5a5848'; // rivet highlight
           ctx.fillRect(lx + rx, bay + ry,     1, 1);
-          ctx.fillStyle = '#0a0806'; // rivet shadow beneath
+          ctx.fillStyle = '#1a1810'; // rivet shadow beneath
           ctx.fillRect(lx + rx, bay + ry + 1, 1, 1);
         });
+
+        // Rust accent streaks on lower body panels
+        ctx.fillStyle = '#6a3010';
+        ctx.fillRect(lx + 14, bay - 6, 4, 1);
+        ctx.fillRect(lx + 3,  bay - 11, 2, 1);
 
         // === COLLAPSED SECTION — panel offset 3px upward suggesting buckled metal ===
         const colX = f.collapseLeft ? lx : lx + f.RIG_W - 10;
         ctx.fillStyle = '#2a2820'; // buckled face catching more light
         ctx.fillRect(colX, bay - f.RIG_H - 3, 10, Math.floor(f.RIG_H / 2));
-        ctx.fillStyle = '#0e0c08'; // seam lines bounding the collapsed panel
+        ctx.fillStyle = '#1a1810'; // seam lines bounding the collapsed panel
         ctx.fillRect(colX,     bay - f.RIG_H - 3, 1, Math.floor(f.RIG_H / 2));
         ctx.fillRect(colX + 9, bay - f.RIG_H - 3, 1, Math.floor(f.RIG_H / 2));
 
@@ -2002,17 +2043,17 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
         // Vertical section
         ctx.fillStyle = '#2a2820';
         ctx.fillRect(armBaseX, armTopY, 3, 12);
-        ctx.fillStyle = '#3e3c30'; // left highlight edge
+        ctx.fillStyle = '#4a4840'; // left highlight edge
         ctx.fillRect(armBaseX, armTopY, 1, 12);
         // Horizontal arm extending from top of vertical section
         const hArmX = armBaseX + (armDir > 0 ? 3 : -9);
         ctx.fillStyle = '#2a2820';
         ctx.fillRect(hArmX, armTopY, 9, 3);
-        ctx.fillStyle = '#3e3c30'; // top highlight edge
+        ctx.fillStyle = '#4a4840'; // top highlight edge
         ctx.fillRect(hArmX, armTopY, 9, 1);
         // Broken dangling end (2×5 px stub dropping from arm tip)
         const hangX = armBaseX + (armDir > 0 ? 11 : -10);
-        ctx.fillStyle = '#1e1c14';
+        ctx.fillStyle = '#2a2820';
         ctx.fillRect(hangX, armTopY + 3, 2, 5);
 
         // === SPINNING GEAR — 6×6 px square, animated via game loop ===
@@ -2022,16 +2063,16 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
         const gy       = bay + f.gearOffY;
         const gearFlip = Math.floor(t * 3) % 2; // 0 or 1
         // Gear body
-        ctx.fillStyle = '#3a382c';
+        ctx.fillStyle = '#2a2820';
         ctx.fillRect(gx, gy, 6, 6);
         // Center cross-slot
-        ctx.fillStyle = '#2a2820';
+        ctx.fillStyle = '#1a1810';
         ctx.fillRect(gx + 2, gy + 2, 2, 2);
         // Top-left highlight pixel
-        ctx.fillStyle = '#4e4c40';
+        ctx.fillStyle = '#4a4840';
         ctx.fillRect(gx + 1, gy + 1, 1, 1);
         // Animated 1px notch pixels on alternating edges
-        ctx.fillStyle = '#0e0c08';
+        ctx.fillStyle = '#1a1810';
         if (gearFlip === 0) {
           ctx.fillRect(gx + 2, gy,     2, 1); // top notch
           ctx.fillRect(gx + 2, gy + 5, 2, 1); // bottom notch
@@ -2081,30 +2122,54 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
         const ox = Math.floor(px);
         const oy = Math.floor(py);
         if (f.shape === 'h') {
+          // === BRIGHT OUTLINE — 1px #8a9a78 separator ===
+          ctx.fillStyle = '#8a9a78';
+          ctx.fillRect(ox - 10, oy - 2, 20, 4);
+          // === IDENTIFICATION LABEL — 8px dark metal plate with 2 rivets ===
+          ctx.fillStyle = '#2a2820';
+          ctx.fillRect(ox - 4, oy - 6, 8, 3);
+          ctx.fillStyle = '#8a9a78';
+          ctx.fillRect(ox - 3, oy - 5, 1, 1); // left rivet
+          ctx.fillRect(ox + 2, oy - 5, 1, 1); // right rivet
           // Straight horizontal pipe, 18px long
           ctx.fillStyle = '#2a2820';
           ctx.fillRect(ox - 9, oy - 1, 18, 2);
-          ctx.fillStyle = '#3e3c30'; // 1px top highlight
+          ctx.fillStyle = '#4a4840'; // 1px top highlight
           ctx.fillRect(ox - 9, oy - 1, 18, 1);
-          ctx.fillStyle = '#0e0c08'; // 1px bottom shadow
+          ctx.fillStyle = '#1a1810'; // 1px bottom shadow
           ctx.fillRect(ox - 9, oy,     18, 1);
-          ctx.fillStyle = '#0a0806'; // open end cap
+          ctx.fillStyle = '#1a1810'; // open end cap
           ctx.fillRect(ox + 8, oy - 1, 1,  2);
+          // Rust accent
+          ctx.fillStyle = '#6a3010';
+          ctx.fillRect(ox - 2, oy - 1, 3, 1);
         } else {
+          // === BRIGHT OUTLINE — 1px #8a9a78 separator ===
+          ctx.fillStyle = '#8a9a78';
+          ctx.fillRect(ox - 8, oy - 2, 16, 13);
+          // === IDENTIFICATION LABEL — 8px dark metal plate with 2 rivets ===
+          ctx.fillStyle = '#2a2820';
+          ctx.fillRect(ox - 4, oy - 6, 8, 3);
+          ctx.fillStyle = '#8a9a78';
+          ctx.fillRect(ox - 3, oy - 5, 1, 1); // left rivet
+          ctx.fillRect(ox + 2, oy - 5, 1, 1); // right rivet
           // L-shaped pipe: 14px horizontal + 10px vertical drop
           ctx.fillStyle = '#2a2820';
           ctx.fillRect(ox - 7, oy - 1, 14, 2); // horizontal arm
-          ctx.fillStyle = '#3e3c30';
+          ctx.fillStyle = '#4a4840';
           ctx.fillRect(ox - 7, oy - 1, 14, 1);
-          ctx.fillStyle = '#0e0c08';
+          ctx.fillStyle = '#1a1810';
           ctx.fillRect(ox - 7, oy,     14, 1);
           // Vertical arm drops from right end of horizontal
           ctx.fillStyle = '#2a2820';
           ctx.fillRect(ox + 5, oy - 1, 2, 10);
-          ctx.fillStyle = '#3e3c30'; // left highlight
+          ctx.fillStyle = '#4a4840'; // left highlight
           ctx.fillRect(ox + 5, oy - 1, 1, 10);
-          ctx.fillStyle = '#0e0c08'; // right shadow
+          ctx.fillStyle = '#1a1810'; // right shadow
           ctx.fillRect(ox + 6, oy - 1, 1, 10);
+          // Rust accent on elbow joint
+          ctx.fillStyle = '#6a3010';
+          ctx.fillRect(ox + 4, oy, 2, 2);
         }
       },
     });
@@ -2123,21 +2188,33 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
       draw(ctx, px, py, f, t) {
         const ox = Math.floor(px);
         const oy = Math.floor(py);
-        // Bin body
-        ctx.fillStyle = '#2a2418';
+        // === BRIGHT OUTLINE — 1px #8a9a78 separator ===
+        ctx.fillStyle = '#8a9a78';
+        ctx.fillRect(ox - 5, oy - 11, 10, 12);
+        // === IDENTIFICATION LABEL — 8px dark metal plate with 2 rivets ===
+        ctx.fillStyle = '#2a2820';
+        ctx.fillRect(ox - 4, oy - 15, 8, 3);
+        ctx.fillStyle = '#8a9a78';
+        ctx.fillRect(ox - 3, oy - 14, 1, 1); // left rivet
+        ctx.fillRect(ox + 2, oy - 14, 1, 1); // right rivet
+        // Bin body — primary salvage metal
+        ctx.fillStyle = '#2a2820';
         ctx.fillRect(ox - 4, oy - 10, 8, 10);
-        ctx.fillStyle = '#3a3228'; // left highlight edge
+        ctx.fillStyle = '#4a4840'; // left highlight edge
         ctx.fillRect(ox - 4, oy - 10, 1, 10);
-        ctx.fillStyle = '#0e0c08'; // right shadow edge
+        ctx.fillStyle = '#1a1810'; // right shadow edge
         ctx.fillRect(ox + 3,  oy - 10, 1, 10);
-        ctx.fillStyle = '#0e0c08'; // base
+        ctx.fillStyle = '#1a1810'; // base
         ctx.fillRect(ox - 4, oy - 1, 8, 1);
         // Panel seam mid-height
         ctx.fillStyle = '#1a1810';
         ctx.fillRect(ox - 4, oy - 5, 8, 1);
         // Open top rim
-        ctx.fillStyle = '#3a3228';
+        ctx.fillStyle = '#4a4840';
         ctx.fillRect(ox - 4, oy - 10, 8, 1);
+        // Rust accent on lower body
+        ctx.fillStyle = '#6a3010';
+        ctx.fillRect(ox - 3, oy - 3, 2, 1);
         // Voidheart ore residue: 2×2 purplish cluster inside open top
         const oreP = (Math.sin(t * Math.PI * 2 / 2.2) + 1) / 2;
         ctx.fillStyle = oreP > 0.6 ? '#8a0050' : '#4a0030';
@@ -2162,6 +2239,15 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
       draw(ctx, px, py) {
         const ox = Math.floor(px);
         const oy = Math.floor(py);
+        // === BRIGHT OUTLINE — 1px #8a9a78 separator ===
+        ctx.fillStyle = '#8a9a78';
+        ctx.fillRect(ox - 6, oy - 11, 12, 12);
+        // === IDENTIFICATION LABEL — 8px dark metal plate with 2 rivets ===
+        ctx.fillStyle = '#2a2820';
+        ctx.fillRect(ox - 4, oy - 15, 8, 3);
+        ctx.fillStyle = '#8a9a78';
+        ctx.fillRect(ox - 3, oy - 14, 1, 1); // left rivet
+        ctx.fillRect(ox + 2, oy - 14, 1, 1); // right rivet
         // Helmet dome
         ctx.fillStyle = '#2a3818'; // orc green-grey armour
         ctx.fillRect(ox - 5, oy - 8, 10, 7);
@@ -2201,8 +2287,17 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
       draw(ctx, px, py) {
         const ox = Math.floor(px);
         const oy = Math.floor(py);
+        // === BRIGHT OUTLINE — 1px #8a9a78 separator ===
+        ctx.fillStyle = '#8a9a78';
+        ctx.fillRect(ox - 9, oy - 8, 18, 11);
+        // === IDENTIFICATION LABEL — 8px dark metal plate with 2 rivets ===
+        ctx.fillStyle = '#2a2820';
+        ctx.fillRect(ox - 4, oy - 12, 8, 3);
+        ctx.fillStyle = '#8a9a78';
+        ctx.fillRect(ox - 3, oy - 11, 1, 1); // left rivet
+        ctx.fillRect(ox + 2, oy - 11, 1, 1); // right rivet
         // Head: 2×2 px central piece
-        ctx.fillStyle = '#4a4838';
+        ctx.fillStyle = '#4a4840';
         ctx.fillRect(ox - 1, oy - 6, 2, 2);
         // 1px dark border around head
         ctx.fillStyle = '#1a1810';
@@ -2235,6 +2330,15 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
       draw(ctx, px, py) {
         const ox = Math.floor(px);
         const oy = Math.floor(py);
+        // === BRIGHT OUTLINE — 1px #8a9a78 separator ===
+        ctx.fillStyle = '#8a9a78';
+        ctx.fillRect(ox - 5, oy - 11, 10, 12);
+        // === IDENTIFICATION LABEL — 8px dark metal plate with 2 rivets ===
+        ctx.fillStyle = '#2a2820';
+        ctx.fillRect(ox - 4, oy - 15, 8, 3);
+        ctx.fillStyle = '#8a9a78';
+        ctx.fillRect(ox - 3, oy - 14, 1, 1); // left rivet
+        ctx.fillRect(ox + 2, oy - 14, 1, 1); // right rivet
         // Main glove body in brass
         ctx.fillStyle = '#3a3010';
         ctx.fillRect(ox - 4, oy - 10, 8, 9);
@@ -2242,9 +2346,9 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
         ctx.fillRect(ox - 4, oy - 10, 8, 1);
         ctx.fillStyle = '#4a3e1a'; // left edge highlight
         ctx.fillRect(ox - 4, oy - 10, 1, 9);
-        ctx.fillStyle = '#1a1608'; // right shadow
+        ctx.fillStyle = '#1a1810'; // right shadow (updated to metal shadow edge)
         ctx.fillRect(ox + 3, oy - 10, 1, 9);
-        ctx.fillStyle = '#0e0c06'; // base rim
+        ctx.fillStyle = '#1a1810'; // base rim
         ctx.fillRect(ox - 4, oy - 1, 8, 1);
         // Green armoured knuckle plate
         ctx.fillStyle = '#2a3818';
