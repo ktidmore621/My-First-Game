@@ -231,19 +231,18 @@ class PilotGameState {
       const tmp = types[i]; types[i] = types[j]; types[j] = tmp;
     }
 
-    // Step 3 — Terrain seed and height map generated BEFORE enemy placement
-    // so each enemy receives a terrain-accurate ground anchor Y.
-    this._terrainSeed    = Math.random() * 1000;
-    this._terrainHeights = this._buildTerrainHeights();
-
-    // Step 4 — Place enemies with guaranteed minimum spacing
+    // ================================================================
+    // PHASE 1 — Compute enemy X positions WITHOUT instantiating objects
+    // ================================================================
+    // Collect world-space geometry only. No OrcCannon or OrcSilo objects
+    // are created yet — they need a ground-anchor Y that doesn't exist
+    // until the terrain has been generated AND flattened.
     const CANNON_FOOTPRINT = 80;   // world-px width of one OrcCannon structure
     const SILO_FOOTPRINT   = 280;  // world-px width of one OrcSilo including perimeter
-    const baseGroundY      = Math.round(this._H * 0.72);
     const rightBound       = config.battlefieldWidth - config.safeZoneEnd;
 
-    let cursor    = config.safeZoneStart;
-    this._enemies = [];
+    let cursor = config.safeZoneStart;
+    const plans = []; // { type, position, footprint, midX }
 
     for (const type of types) {
       const footprint = type === 'cannon' ? CANNON_FOOTPRINT : SILO_FOOTPRINT;
@@ -255,16 +254,53 @@ class PilotGameState {
       // Honour right-edge safe zone — stop early if needed
       if (position + footprint > rightBound) break;
 
-      // Anchor each enemy to the terrain surface at its world-space centre
-      const midX    = position + footprint / 2;
-      const enemyGY = Math.round(baseGroundY - this._getTerrainHeightAt(midX));
-
-      this._enemies.push(
-        type === 'cannon'
-          ? new OrcCannon(position, enemyGY)
-          : new OrcSilo(position, enemyGY)
-      );
+      const midX = position + footprint / 2;
+      plans.push({ type, position, footprint, midX });
       cursor = position + footprint; // advance past this structure
+    }
+
+    // ================================================================
+    // PHASE 2 — Generate terrain height map
+    // ================================================================
+    this._terrainSeed    = Math.random() * 1000;
+    this._terrainHeights = this._buildTerrainHeights();
+
+    // ================================================================
+    // PHASE 3 — Flatten terrain under every planned structure
+    // ================================================================
+    // Flat zone widths (centred on midX of each structure):
+    //   OrcCannon: 80 px footprint + 20 px margin each side = 120 px total (±60 px)
+    //   OrcSilo  : 280 px perimeter + 30 px margin each side = 340 px total (±170 px)
+    // A 20 px linear blend zone on each edge prevents a sharp cliff where
+    // the flattened pad meets the surrounding natural terrain.
+    //
+    // Future ground features (add _flattenTerrainZone calls here when implemented):
+    //   Excavation pit → halfFlat = 30 (60 px total), BLEND_W = 20
+    //   Mining rig     → halfFlat = 25 (50 px total), BLEND_W = 20
+    const CANNON_FLAT_HALF = 60;  // half of 120 px flat zone
+    const SILO_FLAT_HALF   = 170; // half of 340 px flat zone
+    const BLEND_W          = 20;  // blend fringe width on each edge (px)
+
+    for (const plan of plans) {
+      const halfFlat = plan.type === 'cannon' ? CANNON_FLAT_HALF : SILO_FLAT_HALF;
+      this._flattenTerrainZone(plan.midX, halfFlat, BLEND_W);
+    }
+
+    // ================================================================
+    // PHASE 4 — Instantiate enemy objects on the now-flattened terrain
+    // ================================================================
+    // The terrain under each structure is now guaranteed flat, so
+    // _getTerrainHeightAt returns the same value across the full footprint.
+    const baseGroundY = Math.round(this._H * 0.72);
+    this._enemies = [];
+
+    for (const plan of plans) {
+      const enemyGY = Math.round(baseGroundY - this._getTerrainHeightAt(plan.midX));
+      this._enemies.push(
+        plan.type === 'cannon'
+          ? new OrcCannon(plan.position, enemyGY)
+          : new OrcSilo(plan.position, enemyGY)
+      );
     }
 
     // Step 5 — Console report for verification
@@ -274,6 +310,7 @@ class PilotGameState {
     );
     console.log(`[Battlefield] Terrain seed: ${this._terrainSeed.toFixed(1)} | Placement: ${typeList}`);
     console.log(`[Battlefield] Terrain heights: ${this._terrainHeights.length} samples every 32 px | range −22…+16 px`);
+    console.log(`[Battlefield] Flat zones: cannon ±${CANNON_FLAT_HALF} px, silo ±${SILO_FLAT_HALF} px, blend ${BLEND_W} px each edge`);
   }
 
   // ================================================================
@@ -357,6 +394,69 @@ class PilotGameState {
     }
 
     return heights;
+  }
+
+  // ================================================================
+  // TERRAIN FLATTENING
+  // ================================================================
+
+  // Flattens a zone of the terrain height map centred on worldX.
+  //
+  // Algorithm (three passes):
+  //   1. Average  — compute the mean height of every sample inside the
+  //                 flat zone [centerX − halfFlatWidth … centerX + halfFlatWidth].
+  //   2. Flat set — force every sample in that range to the mean height.
+  //   3. Blend    — on each edge, linearly interpolate the blendWidth-px
+  //                 fringe from the original natural terrain back to the flat
+  //                 mean, preventing a sharp cliff at the pad boundary.
+  //
+  // Called from _generateBattlefield() after the height map has been built
+  // and before any enemy objects are constructed.
+  _flattenTerrainZone(centerX, halfFlatWidth, blendWidth) {
+    const STEP  = 32;
+    const h     = this._terrainHeights;
+    const count = h.length;
+
+    const flatL = centerX - halfFlatWidth;
+    const flatR = centerX + halfFlatWidth;
+
+    // Sample index ranges for the flat zone and each blend fringe
+    const iFlatL   = Math.max(0,         Math.ceil( flatL / STEP));
+    const iFlatR   = Math.min(count - 1, Math.floor(flatR / STEP));
+    const iBlendLL = Math.max(0,         Math.ceil( (flatL - blendWidth) / STEP));
+    const iBlendRR = Math.min(count - 1, Math.floor((flatR + blendWidth) / STEP));
+
+    // Pass 1 — average height across all samples in the flat zone
+    let sum = 0, num = 0;
+    for (let i = iFlatL; i <= iFlatR; i++) { sum += h[i]; num++; }
+    if (num === 0) return; // zone too narrow for any 32 px sample — nothing to do
+    const flatH = sum / num;
+
+    // Snapshot original fringe heights BEFORE overwriting anything, so the
+    // blend can still reference the untouched natural terrain values.
+    const origL = [];
+    const origR = [];
+    for (let i = iBlendLL; i < iFlatL;      i++) origL.push(h[i]);
+    for (let i = iFlatR + 1; i <= iBlendRR; i++) origR.push(h[i]);
+
+    // Pass 2 — write the flat height across the structural footprint
+    for (let i = iFlatL; i <= iFlatR; i++) h[i] = flatH;
+
+    // Pass 3 — left blend fringe: natural terrain → flatH
+    for (let i = iBlendLL; i < iFlatL; i++) {
+      const t = Math.max(0, Math.min(1,
+        ((i * STEP) - (flatL - blendWidth)) / blendWidth
+      )); // 0 at blend start → 1 at flat zone edge
+      h[i] = origL[i - iBlendLL] * (1 - t) + flatH * t;
+    }
+
+    // Pass 3 — right blend fringe: flatH → natural terrain
+    for (let i = iFlatR + 1; i <= iBlendRR; i++) {
+      const t = Math.max(0, Math.min(1,
+        ((i * STEP) - flatR) / blendWidth
+      )); // 0 at flat zone edge → 1 at blend end
+      h[i] = flatH * (1 - t) + origR[i - iFlatR - 1] * t;
+    }
   }
 
   // Returns the interpolated terrain height (px) at any world-space X.
