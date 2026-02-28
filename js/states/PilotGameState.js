@@ -136,8 +136,8 @@ class PilotGameState {
     this._generateBattlefield(LEVEL_1_CONFIG);
 
     // Build the ground detail tile using this run's terrain seed.
-    // Same seed always yields the same tile layout — consistent mid-run.
-    this._groundFeatures = _buildGroundFeatures(this._terrainSeed);
+    // The height getter lets features nudge toward terrain peaks/valleys.
+    this._groundFeatures = _buildGroundFeatures(this._terrainSeed, x => this._getTerrainHeightAt(x));
 
     // Register death callback
     this._player.health.onDeath(() => {
@@ -282,12 +282,14 @@ class PilotGameState {
 
   // Builds the terrain height array — one sample every 32 world-px across
   // the full battlefield. For a 5000 px arena that is 157 samples
-  // (positions 0, 32, 64 … 4992). Heights range from −14 to +10 px
+  // (positions 0, 32, 64 … 4992). Heights are clamped to −22…+16 px
   // relative to the baseline horizonY (positive = raised, negative = dipped).
   //
-  // The seeded-random formula mirrors _buildGroundFeatures so both systems
-  // share a single reproducible seed. Two smoothing passes convert the raw
-  // noise into gentle rolling hills.
+  // Four sine-wave octaves are summed, each with a unique random phase offset
+  // so no two runs ever produce the same landscape shape. One smoothing pass
+  // removes sharp micro-transitions. Flat zones are injected afterward to
+  // create natural plateaus and plains so the terrain doesn't undulate
+  // constantly from one end of the battlefield to the other.
   _buildTerrainHeights() {
     const STEP  = 32;
     const count = Math.floor(this._BATTLEFIELD_W / STEP) + 1; // 157 for 5000 px
@@ -299,22 +301,59 @@ class PilotGameState {
     // Normalise the [~0.1715, ~0.2512] output range to [0, 1]
     const srf = () => Math.max(0, Math.min(1, (sr() - 0.1715) / (0.2512 - 0.1715)));
 
-    // Raw heights: map [0, 1] → [−22, +16]  (38 px total range)
-    // Wider range makes hills and valleys dramatically more visible.
+    // ---- Four unique phase offsets [0, 2π] ----
+    // These are the key that breaks any regularity between octaves and between
+    // runs. Same seed → same offsets → same landscape; different seed → new world.
+    const TWO_PI = Math.PI * 2;
+    const phase1 = srf() * TWO_PI; // octave 1 — broad landscape shapes
+    const phase2 = srf() * TWO_PI; // octave 2 — rolling hills
+    const phase3 = srf() * TWO_PI; // octave 3 — surface bumps
+    const phase4 = srf() * TWO_PI; // octave 4 — micro texture
+
+    // ---- Multi-octave noise ----
+    //   Oct 1: 800 px cycle, 10 px amplitude → broad sweeping rises and valleys
+    //   Oct 2: 300 px cycle,  5 px amplitude → rolling hills and plateaus
+    //   Oct 3: 120 px cycle,  3 px amplitude → bumps and minor undulation
+    //   Oct 4:  45 px cycle,  1 px amplitude → surface texture and noise
     const heights = new Array(count);
     for (let i = 0; i < count; i++) {
-      heights[i] = srf() * 38 - 22;
+      const x    = i * STEP;
+      const oct1 = 10 * Math.sin(x / 800  * TWO_PI + phase1);
+      const oct2 =  5 * Math.sin(x / 300  * TWO_PI + phase2);
+      const oct3 =  3 * Math.sin(x / 120  * TWO_PI + phase3);
+      const oct4 =  1 * Math.sin(x / 45   * TWO_PI + phase4);
+      heights[i] = oct1 + oct2 + oct3 + oct4;
     }
 
-    // Smooth twice: each value becomes a weighted average of itself and its
-    // two neighbours, converting jagged noise into gentle rolling hills.
-    //   height[i] = height[i−1] × 0.25 + height[i] × 0.50 + height[i+1] × 0.25
-    for (let pass = 0; pass < 2; pass++) {
-      const smoothed = heights.slice(); // copy before modifying in place
-      for (let i = 1; i < count - 1; i++) {
-        smoothed[i] = heights[i - 1] * 0.25 + heights[i] * 0.5 + heights[i + 1] * 0.25;
-      }
-      for (let i = 0; i < count; i++) heights[i] = smoothed[i];
+    // Single smoothing pass — multi-octave noise is already coherent, so one
+    // pass is enough to remove the sharpest micro transitions without
+    // softening the broad landscape shapes produced by the lower octaves.
+    const smoothed = heights.slice();
+    for (let i = 1; i < count - 1; i++) {
+      smoothed[i] = heights[i - 1] * 0.25 + heights[i] * 0.5 + heights[i + 1] * 0.25;
+    }
+    for (let i = 0; i < count; i++) heights[i] = smoothed[i];
+
+    // Clamp: keep all values within the permitted height range.
+    for (let i = 0; i < count; i++) {
+      heights[i] = Math.max(-22, Math.min(16, heights[i]));
+    }
+
+    // ---- Flat zone injection ----
+    // 3–5 zones are flattened to their local mean height, creating natural
+    // plateaus and plains so the terrain doesn't undulate wall-to-wall.
+    // Each zone is 80–200 px wide at a random position across the battlefield.
+    const zoneCount = 3 + Math.floor(srf() * 3); // 3, 4, or 5 flat zones
+    for (let z = 0; z < zoneCount; z++) {
+      const centerX = Math.round(srf() * this._BATTLEFIELD_W);
+      const halfW   = Math.round((80 + srf() * 120) / 2); // half of an 80–200 px zone
+      const i0 = Math.max(0,         Math.floor((centerX - halfW) / STEP));
+      const i1 = Math.min(count - 1, Math.ceil( (centerX + halfW) / STEP));
+      // Flatten to the mean — creates a plateau at whatever height that section sits
+      let sum = 0;
+      for (let i = i0; i <= i1; i++) sum += heights[i];
+      const mean = sum / (i1 - i0 + 1);
+      for (let i = i0; i <= i1; i++) heights[i] = mean;
     }
 
     return heights;
@@ -1078,7 +1117,7 @@ class PilotGameState {
    The draw functions use only ctx primitives — no images needed.
    ============================================================ */
 
-function _buildGroundFeatures(seed = 0) {
+function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
   const features = [];
 
   // ---- Deterministic seeded random ----
@@ -1127,9 +1166,17 @@ function _buildGroundFeatures(seed = 0) {
     [460, 0.72, 19], [560, 0.22, 13], [680, 0.58, 15],
     [790, 0.42, 12], [900, 0.75, 18],
   ].forEach(([bx, by, br]) => {
-    const fx = Math.max(10,   Math.min(950,  Math.round(bx + srf() * 120 - 60)));
+    let fx = Math.max(10,   Math.min(950,  Math.round(bx + srf() * 120 - 60)));
     const fy = Math.max(0.15, Math.min(0.85, by + srf() * 0.20 - 0.10));
     const r  = Math.max(9,    Math.min(22,   Math.round(br + srf() * 8   - 4)));
+
+    // Craters prefer low points — scan ±200 px at 32 px steps for the
+    // deepest nearby valley and nudge the crater's tile position there.
+    let _cBestH = getHeightAt(fx);
+    for (let _sx = Math.max(10, fx - 200); _sx <= Math.min(950, fx + 200); _sx += 32) {
+      const _h = getHeightAt(_sx);
+      if (_h < _cBestH) { _cBestH = _h; fx = _sx; }
+    }
 
     // Local RNG keyed to this crater's position — does NOT consume shared sr() slots.
     let _di = 0;
