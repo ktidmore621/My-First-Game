@@ -31,6 +31,11 @@ const config = {
     GameOverScene,
   ],
 
+  // 4 active pointers required for simultaneous dual-stick + button touch
+  input: {
+    activePointers: 4,
+  },
+
   // Responsive scaling: fill the screen while preserving 16:9 ratio
   scale: {
     mode:       Phaser.Scale.FIT,

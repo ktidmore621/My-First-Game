@@ -60,6 +60,9 @@ class InputSystem {
   constructor(scene) {
     this.scene = scene;
 
+    // Ensures 4 total pointers (default 1 + 3 added) for dual-stick multi-touch
+    this.scene.input.addPointer(3);
+
     // ---- Stick state (same shape as InputHandler) ----
     this.leftStick  = { active: false, x: 0, y: 0, baseX: 0, baseY: 0 };
     this.rightStick = { active: false, x: 0, y: 0, baseX: 0, baseY: 0 };
