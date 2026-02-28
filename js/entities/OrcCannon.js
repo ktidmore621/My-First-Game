@@ -57,13 +57,26 @@
      Returns true on the first hit; deactivates that bolt.
    ============================================================ */
 
-class OrcCannon {
+class OrcCannon extends Phaser.GameObjects.Graphics {
 
-  constructor(worldX, groundY) {
-    // World-space X centre of the structure (scrolls with the ground)
-    this.worldX    = worldX;
-    // Screen-space Y of the ground surface the structure sits on
-    this._groundY  = groundY;
+  // scene    : the Phaser.Scene that owns this object
+  // worldX   : world-space X centre of the structure
+  // groundY  : screen-space Y of the ground surface (constant; camera.scrollY = 0)
+  constructor(scene, worldX, groundY) {
+    super(scene);
+
+    // Store scene reference for camera shake and timer access
+    this._scene = scene;
+
+    // Phaser world position — camera handles the screen offset automatically.
+    // this.x = worldX  replaces the old this.worldX
+    // this.y = groundY replaces the old this._groundY
+    this.x = worldX;
+    this.y = groundY;
+
+    // Register with scene display list so Phaser renders this object
+    scene.add.existing(this);
+    this.setDepth(5); // below PlayerShip (depth 10), above ground (depth 1)
 
     // ---- Health: 6 hit points — destroyed by 6 direct PX-9 hits ----
     this.health    = new HealthSystem(6);
@@ -132,13 +145,16 @@ class OrcCannon {
   isAlive() { return !this._dead; }
 
   // ================================================================
-  // UPDATE — called every frame from PilotGameState.update()
+  // UPDATE — called every frame from EnemyManager.update()
   //
+  // time         : Phaser scene time in milliseconds (ignored here)
+  // delta        : Phaser frame delta in milliseconds — divide by 1000 for seconds
   // playerWorldX : player's current world-space X position
   // playerY      : player's current screen-space Y position
   // ================================================================
 
-  update(dt, playerWorldX, playerY) {
+  update(time, delta, playerWorldX, playerY) {
+    const dt = delta / 1000;
     if (this._dead) return;
 
     // The pulse timer advances unconditionally — it drives the power cell
@@ -186,7 +202,7 @@ class OrcCannon {
     // ---- Detection range: 400 horizontal world-space pixels ----
     // Measured on the X axis only — the cannon fires upward toward whatever
     // Y the player is at, so vertical distance doesn't affect lock-on.
-    const inRange = Math.abs(playerWorldX - this.worldX) <= 400;
+    const inRange = Math.abs(playerWorldX - this.x) <= 400;
 
     // ================================================================
     // STATE MACHINE
@@ -244,24 +260,44 @@ class OrcCannon {
   }
 
   // ================================================================
-  // RENDER — called every frame from PilotGameState.render()
+  // RENDERCANVAS — Phaser Canvas renderer hook.
   //
-  // cameraX : world-space X of the screen's left edge
+  // Overrides Phaser.GameObjects.Graphics.renderCanvas so we can use
+  // the raw Canvas 2D API directly (enabling ctx.save/rotate/restore
+  // for the swaying cannon parts) instead of Phaser's command-buffer
+  // drawing API.
+  //
+  // Phaser calls this automatically each frame with:
+  //   renderer : Phaser.Renderer.Canvas.CanvasRenderer
+  //   src      : this game object (same as `this`)
+  //   camera   : the active Phaser.Cameras.Scene2D.Camera
   // ================================================================
 
-  render(ctx, cameraX) {
+  renderCanvas(renderer, src, camera) {
     if (this._dead) return;
 
-    const screenX = Math.round(this.worldX - cameraX);
-    // Cull structures entirely off-screen (structure is ~56px wide, ~150px tall)
+    const ctx = renderer.currentContext;
+
+    // World → screen X: Phaser camera handles the offset.
+    // this.x is the world-space X set in the constructor; camera.scrollX is
+    // the camera's current left-edge world position.
+    const screenX = Math.round(this.x - camera.scrollX);
+
+    // Cull structures entirely off-screen (structure is ~56 px wide, ~150 px tall)
     if (screenX < -80 || screenX > 1040) return;
 
+    // this.y = groundY — camera.scrollY is always 0 in this scene (world height
+    // equals viewport height, so the camera never scrolls vertically).
+    const screenY = this.y;
+
     ctx.save();
-    ctx.translate(screenX, this._groundY);
+    ctx.translate(screenX, screenY);
 
     if (this._dying) {
       this._renderExplosion(ctx);
       ctx.restore();
+      // Bolts continue flying after structure dies — draw in screen space
+      this._renderBolts(ctx, camera.scrollX);
       return;
     }
 
@@ -285,7 +321,7 @@ class OrcCannon {
 
     // Enemy bolts render in screen space — after ctx.restore() so they
     // are not affected by the per-structure translate
-    this._renderBolts(ctx, cameraX);
+    this._renderBolts(ctx, camera.scrollX);
   }
 
   // ================================================================
@@ -294,12 +330,12 @@ class OrcCannon {
 
   // Returns the structure's axis-aligned bounding box.
   // x, w are world-space; y, h are screen-space.
-  // PilotGameState uses this to test player projectile hits against the cannon.
+  // EnemyManager uses this to test player projectile hits against the cannon.
   // Dimensions reflect the 1.75× scaled structure (~56 px wide, ~150 px tall).
   getStructureHitbox() {
     return {
-      x: this.worldX - 28,   // world-space left edge  (56 px wide)
-      y: this._groundY - 150, // screen-space top edge (150 px tall)
+      x: this.x - 28,   // world-space left edge  (56 px wide)
+      y: this.y - 150,  // screen-space top edge (150 px tall)
       w: 56,
       h: 150,
     };
@@ -350,11 +386,11 @@ class OrcCannon {
     // Fire angle from live sway (0° during windup lock; free during firing state).
     const fireAngleRad = this._swayAngleDeg * Math.PI / 180;
 
-    // Barrel tip position — rotate bore tip around cannon pivot (groundY-108).
+    // Barrel tip position — rotate bore tip around cannon pivot (this.y - 108).
     // Bore tip is 37px above pivot along the barrel axis.
     const BARREL_TIP_DIST = 37;
-    const tipWorldX = this.worldX + Math.sin(fireAngleRad) * BARREL_TIP_DIST;
-    const tipY      = this._groundY - 108 - Math.cos(fireAngleRad) * BARREL_TIP_DIST;
+    const tipWorldX = this.x + Math.sin(fireAngleRad) * BARREL_TIP_DIST;
+    const tipY      = this.y - 108 - Math.cos(fireAngleRad) * BARREL_TIP_DIST;
 
     b.active       = true;
     b.worldX       = tipWorldX;
@@ -366,6 +402,9 @@ class OrcCannon {
 
     // Trigger 3-frame recoil animation
     this._recoilTimer = 3 / 60;
+
+    // Phaser camera shake — subtle ground-impact feel on every shot
+    this._scene.cameras.main.shake(100, 0.005);
   }
 
   // ================================================================
@@ -1081,10 +1120,11 @@ class OrcCannon {
   // Draws all active plasma bolts in screen space.
   // Called after ctx.restore() so bolts are not affected by the
   // per-structure translate used by _renderStructure.
-  _renderBolts(ctx, cameraX) {
+  // cameraScrollX : camera.scrollX from the active Phaser camera
+  _renderBolts(ctx, cameraScrollX) {
     this._bolts.forEach(b => {
       if (!b.active) return;
-      const sx = Math.round(b.worldX - cameraX);
+      const sx = Math.round(b.worldX - cameraScrollX);
       const sy = Math.round(b.y);
 
       // 6×6 px purplish-red outer bolt — visually distinct from IPDF plasma

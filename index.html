@@ -33,11 +33,21 @@
   <script src="js/systems/InputSystem.js"></script>
 
   <!--
-    Entities — game object classes used by scenes.
-    Load after systems, before the scenes that instantiate them.
+    Entities — game object classes used by scenes and systems.
+    Load after systems, before anything that instantiates them.
+    OrcCannon and OrcSilo extend Phaser.GameObjects.Graphics, so
+    they must load after the Phaser CDN script above.
   -->
   <script src="js/entities/HealthSystem.js"></script>
   <script src="js/entities/PlayerShip.js"></script>
+  <script src="js/entities/OrcCannon.js"></script>
+  <script src="js/entities/OrcSilo.js"></script>
+
+  <!--
+    Systems — EnemyManager depends on OrcCannon and OrcSilo,
+    so it loads after those entities and before the scenes.
+  -->
+  <script src="js/systems/EnemyManager.js"></script>
 
   <!--
     Phaser Scenes — load in dependency order before main.js.

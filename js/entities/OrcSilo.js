@@ -112,13 +112,26 @@ const MISSILE_SHOOT_HITBOX_H  = 32;  // player projectile vs missile: height
 const MISSILE_DAMAGE_HITBOX_W = 10;  // missile vs player: width
 const MISSILE_DAMAGE_HITBOX_H = 21;  // missile vs player: height
 
-class OrcSilo {
+class OrcSilo extends Phaser.GameObjects.Graphics {
 
-  constructor(worldX, groundY) {
-    // World-space X centre of the structure (scrolls with the ground)
-    this.worldX   = worldX;
-    // Screen-space Y of the ground surface the structure sits on
-    this._groundY = groundY;
+  // scene    : the Phaser.Scene that owns this object
+  // worldX   : world-space X centre of the structure
+  // groundY  : screen-space Y of the ground surface (constant; camera.scrollY = 0)
+  constructor(scene, worldX, groundY) {
+    super(scene);
+
+    // Store scene reference for Phaser API calls
+    this._scene = scene;
+
+    // Phaser world position — camera handles screen offset automatically.
+    // this.x = worldX  replaces the old this.worldX
+    // this.y = groundY replaces the old this._groundY
+    this.x = worldX;
+    this.y = groundY;
+
+    // Register with scene display list
+    scene.add.existing(this);
+    this.setDepth(5); // below PlayerShip (depth 10), above ground (depth 1)
 
     // ---- Health: 10 hit points ----
     this.health    = new HealthSystem(10);
@@ -140,13 +153,26 @@ class OrcSilo {
     this._steamParticles = [];
     this._steamTimer     = 0;
 
-    // ---- Warning light independent blink phases (4 corner posts) ----
-    // Staggered offsets so the four lights never all blink simultaneously.
-    this._lightPhases = [0.0, 1.4, 2.8, 4.2];
+    // ---- Warning light beacons — driven by Phaser.Time events ----
+    // Four posts (indices 0–3), each with an independent blink state and timer.
+    // Phaser.Time.addEvent gives precise, decoupled timing vs. the old sine-wave
+    // approach. Staggered start delays replace the old _lightPhases offsets.
+    // IDLE:  0.625 Hz → 800 ms period    ALERT: 3.333 Hz → 150 ms period
+    this._beaconLit    = [false, false, false, false];
+    this._beaconAlert  = false;  // tracks current mode to detect state changes
+    const idleStagger  = [0, 200, 400, 600]; // ms start offsets per post
+    this._beaconTimers = idleStagger.map((startAt, i) =>
+      scene.time.addEvent({
+        delay:   800,
+        startAt,
+        callback: () => { this._beaconLit[i] = !this._beaconLit[i]; },
+        loop:    true,
+      })
+    );
 
     // ---- Last-known player position — used by _renderMissiles for proximity glow ----
-    this._lastPlayerWorldX = 0;
-    this._lastPlayerY      = 270;
+    this._lastPlayerWorldX = worldX;
+    this._lastPlayerY      = groundY - 150; // reasonable default until first frame
 
     // ---- Outgoing missiles — pool of 2 in-flight ----
     // Each slot: { active, worldX, y, originY, heading, age, velocityX, velocityY, hits, hitFlashTimer }
@@ -224,6 +250,9 @@ class OrcSilo {
       this._dying      = true;
       this._deathTimer = 0;
       this._spawnDebris();
+      // Clean up beacon timers — silo is gone
+      this._beaconTimers.forEach(t => scene.time.removeEvent(t));
+      this._beaconTimers = [];
     });
   }
 
@@ -231,13 +260,17 @@ class OrcSilo {
   isAlive() { return !this._dead; }
 
   // ================================================================
-  // UPDATE — called every frame from PilotGameState.update()
+  // UPDATE — called every frame from EnemyManager.update()
   //
-  // playerWorldX : player's current world-space X position
-  // playerY      : player's current screen-space Y position
+  // time          : Phaser scene time in milliseconds (ignored here)
+  // delta         : Phaser frame delta in milliseconds — divide by 1000
+  // playerWorldX  : player's current world-space X position
+  // playerY       : player's current screen-space Y position
+  // cameraScrollX : camera.scrollX — used for viewport-based trigger range
   // ================================================================
 
-  update(dt, playerWorldX, playerY, cameraX) {
+  update(time, delta, playerWorldX, playerY, cameraScrollX) {
+    const dt = delta / 1000;
     if (this._dead) return;
 
     // Cache player position each frame so _renderMissiles can access it
@@ -258,9 +291,9 @@ class OrcSilo {
     }
 
     // ---- Advance in-flight missiles with homing logic ----
-    // Each frame: compute angle from missile to player, rotate heading toward
-    // it at MISSILE_TURN_RATE deg/s (shortest path), then drive velocity from
-    // the new heading. This recalculates every frame regardless of player speed.
+    // Phaser.Math.Angle.Between computes the angle from missile to player cleanly.
+    // Phaser.Math.Angle.RotateTo steps toward that target angle by at most
+    // (MISSILE_TURN_RATE * dt) radians, automatically taking the shortest arc.
     const trackRateRad = (MISSILE_TURN_RATE * Math.PI / 180); // deg/s → rad/s
     this._missiles.forEach(m => {
       if (!m.active) return;
@@ -271,19 +304,13 @@ class OrcSilo {
 
       // Homing phase: steer heading toward player while tracking window is open
       if (m.age < MISSILE_TRACKING_DURATION) {
-        // Angle from missile's current world position to player's current position
-        const dx          = playerWorldX - m.worldX;
-        const dy          = playerY      - m.y;
-        const targetAngle = Math.atan2(dy, dx);
-
-        // Shortest rotation path to target angle, wrapped to −π…+π
-        let delta = targetAngle - m.heading;
-        while (delta >  Math.PI) delta -= Math.PI * 2;
-        while (delta < -Math.PI) delta += Math.PI * 2;
-
-        // Clamp turn to max rate this frame
-        delta      = Math.max(-trackRateRad * dt, Math.min(trackRateRad * dt, delta));
-        m.heading += delta;
+        // Phaser utility: angle (radians) from missile world position to player
+        const targetAngle = Phaser.Math.Angle.Between(
+          m.worldX, m.y, playerWorldX, playerY
+        );
+        // Phaser utility: rotate current heading toward target by max step (rad)
+        // Takes the shortest path and wraps correctly — replaces manual delta/wrap code
+        m.heading = Phaser.Math.Angle.RotateTo(m.heading, targetAngle, trackRateRad * dt);
       }
 
       // Velocity always derived from current heading — ballistic after tracking ends
@@ -316,7 +343,11 @@ class OrcSilo {
     // arbitrary fixed distance — the sequence now starts while the silo
     // is still just beyond the right edge, so the hatch is visibly opening
     // the moment the structure fully enters view.
-    const inRange = this.worldX <= cameraX + 960 + 100;
+    const inRange = this.x <= cameraScrollX + 960 + 100;
+
+    // Sync warning beacon blink rate to current alert state (idle vs. windup/firing).
+    // _updateBeaconAlert() only acts when the state actually changes.
+    this._updateBeaconAlert(inRange && this._state !== 'idle');
 
     // ---- Hatch animation ----
     // Closes gradually in idle (at 2 units/s), tracks wind-up progress
@@ -411,30 +442,38 @@ class OrcSilo {
   }
 
   // ================================================================
-  // RENDER — called every frame from PilotGameState.render()
+  // RENDERCANVAS — Phaser Canvas renderer hook.
   //
-  // cameraX : world-space X of the screen's left edge
+  // Overrides Phaser.GameObjects.Graphics.renderCanvas so we can use
+  // the raw Canvas 2D API (enabling ctx.save/translate/restore) instead
+  // of Phaser's command-buffer system. Phaser calls this automatically.
+  //
+  // renderer : Phaser.Renderer.Canvas.CanvasRenderer
+  // src      : this game object
+  // camera   : the active Phaser.Cameras.Scene2D.Camera
   // ================================================================
 
-  render(ctx, cameraX) {
+  renderCanvas(renderer, src, camera) {
     if (this._dead) return;
+
+    const ctx = renderer.currentContext;
+    const cameraScrollX = camera.scrollX;
 
     // World-space effects must render even when the silo structure is off-screen.
     // They are drawn first, before the culling guard, so missiles in flight,
     // launch smoke, and impact explosions remain visible after the silo scrolls
     // past the left edge of the camera viewport.
-    this._renderMissiles(ctx, cameraX);
-    // Render active launch smoke puffs in world space
-    this._renderLaunchSmoke(ctx, cameraX);
-    // Render active impact explosions in world space
-    this._renderImpactExplosions(ctx, cameraX);
+    this._renderMissiles(ctx, cameraScrollX);
+    this._renderLaunchSmoke(ctx, cameraScrollX);
+    this._renderImpactExplosions(ctx, cameraScrollX);
 
-    const screenX = Math.round(this.worldX - cameraX);
-    // Cull structures entirely off-screen (structure is 120 px wide, 30 px tall)
+    // World → screen X; camera.scrollY is always 0 in this scene.
+    const screenX = Math.round(this.x - cameraScrollX);
+    // Cull structures entirely off-screen (120 px wide, 30 px tall)
     if (screenX < -140 || screenX > 1100) return;
 
     ctx.save();
-    ctx.translate(screenX, this._groundY);
+    ctx.translate(screenX, this.y);
 
     if (this._dying) {
       this._renderExplosion(ctx);
@@ -474,8 +513,8 @@ class OrcSilo {
   // Covers the full 120 × 28 px above-ground structure.
   getStructureHitbox() {
     return {
-      x: this.worldX - 60,    // world-space left edge  (120 px wide)
-      y: this._groundY - 28,  // screen-space top edge  (28 px tall)
+      x: this.x - 60,    // world-space left edge  (120 px wide)
+      y: this.y - 28,    // screen-space top edge  (28 px tall)
       w: 120,
       h: 28,
     };
@@ -555,8 +594,8 @@ class OrcSilo {
     if (!m) return; // both slots in-flight — launch suppressed
 
     // Launch point: centre of silo at the top of the rim
-    const tipWorldX = this.worldX;
-    const tipY      = this._groundY - 28; // top of the armored rim
+    const tipWorldX = this.x;
+    const tipY      = this.y - 28; // top of the armored rim
 
     m.active        = true;
     m.worldX        = tipWorldX;
@@ -715,8 +754,8 @@ class OrcSilo {
   // Puffs rise slowly and drift left/right, fading over 2 s.
   // Stored in world-space so they stay fixed as the camera scrolls.
   _spawnLaunchSmoke() {
-    const ox = this.worldX;            // silo centre (world-space)
-    const oy = this._groundY - 28;    // screen-space Y of the silo opening
+    const ox = this.x;            // silo centre (world-space)
+    const oy = this.y - 28;       // screen-space Y of the silo opening
 
     console.log('[OrcSilo] Launch smoke spawned at worldX:', ox, '— missile firing');
 
@@ -754,14 +793,14 @@ class OrcSilo {
 
   // Renders launch smoke puffs in world-space (screen X = wx - cameraX).
   // Quadratic alpha fade so puffs tail off gently.
-  _renderLaunchSmoke(ctx, cameraX) {
+  _renderLaunchSmoke(ctx, cameraScrollX) {
     if (this._launchSmoke.length === 0) return;
     this._launchSmoke.forEach(p => {
       const alpha = Math.max(0, 1.0 - p.age / 2.0);
       ctx.globalAlpha = alpha * alpha;   // quadratic fade
       ctx.fillStyle   = p.color;
-      const sx = Math.round(p.wx - cameraX) - Math.round(p.w / 2);
-      const sy = Math.round(p.y)            - Math.round(p.h / 2);
+      const sx = Math.round(p.wx - cameraScrollX) - Math.round(p.w / 2);
+      const sy = Math.round(p.y)                  - Math.round(p.h / 2);
       ctx.fillRect(sx, sy, p.w, p.h);
     });
     ctx.globalAlpha = 1.0;
@@ -867,11 +906,11 @@ class OrcSilo {
   // Frame 2 (0 – 0.40 s) : 8 Voidheart burst fragments
   // Frame 3 (0.05 – 0.6 s): 4 gold spark pixels
   // Frame 4 (0.10 – 1.1 s): 4 dark-purple smoke puffs
-  _renderImpactExplosions(ctx, cameraX) {
+  _renderImpactExplosions(ctx, cameraScrollX) {
     this._impactExplosions.forEach(ex => {
       if (!ex.active) return;
 
-      const sx = Math.round(ex.worldX - cameraX);
+      const sx = Math.round(ex.worldX - cameraScrollX);
       const sy = Math.round(ex.y);
       const t  = ex.timer;
 
@@ -972,6 +1011,31 @@ class OrcSilo {
     if (this._deathTimer >= 2.5) {
       this._dead = true;
     }
+  }
+
+  // ================================================================
+  // PRIVATE — BEACON ALERT STATE
+  // ================================================================
+
+  // Called each frame to sync beacon blink speed to the current alert state.
+  // Only rebuilds the Phaser timer events when the state actually changes,
+  // preventing unnecessary object churn every frame.
+  //
+  // IDLE  : 0.625 Hz → 800 ms period  (slow gold blink)
+  // ALERT : 3.333 Hz → 150 ms period  (fast red blink)
+  _updateBeaconAlert(isAlert) {
+    if (this._beaconAlert === isAlert) return; // no change — nothing to do
+    this._beaconAlert = isAlert;
+
+    const delay = isAlert ? 150 : 800;
+    this._beaconTimers.forEach((timer, i) => {
+      this._scene.time.removeEvent(timer);
+      this._beaconTimers[i] = this._scene.time.addEvent({
+        delay,
+        callback: () => { this._beaconLit[i] = !this._beaconLit[i]; },
+        loop: true,
+      });
+    });
   }
 
   // ================================================================
@@ -1729,15 +1793,12 @@ class OrcSilo {
       ctx.fillRect(cx + 2, -33, 1, 1);
 
       // ================================================================
-      // IDLE = gold slow blink, ALERT = red rapid blink — driven by _siloState
-      // WARNING BEACON — mounted on the post cap
+      // WARNING BEACON — driven by Phaser.Time events (see _updateBeaconAlert)
+      // IDLE = slow gold blink (0.625 Hz)   ALERT = fast red blink (3.333 Hz)
+      // _beaconLit[i] is toggled by the timer; _beaconAlert tracks the mode.
       // ================================================================
-      const isAlert = (this._state === 'windup' || this._state === 'firing');
-      // IDLE:  0.625 Hz → 0.8 s on, 0.8 s off   ALERT: 3.333 Hz → 0.15 s on, 0.15 s off
-      const blinkHz = isAlert ? (10 / 3) : 0.625;     // cycles per second
-      const phase   = this._lightPhases[i];
-      const litFrac = Math.sin(this._pulseT * blinkHz * Math.PI * 2 + phase);
-      const lit     = litFrac > 0;
+      const isAlert = this._beaconAlert;
+      const lit     = this._beaconLit[i];
 
       // 4 × 4 px dark metal housing (centred on post, above cap)
       ctx.fillStyle = '#2a2820';
@@ -2092,7 +2153,7 @@ class OrcSilo {
   // Hit flash: when hitFlashTimer > 0, a full-sprite white fillRect is
   // drawn on top (lasts 2 render frames ≈ 2/60 s).
   // ----------------------------------------------------------------
-  _renderMissiles(ctx, cameraX) {
+  _renderMissiles(ctx, cameraScrollX) {
     // ---- Missile smoke trail particles — rendered first so they appear behind sprites ----
     // 2×2 px dark-grey puffs that linger in world space after the missile passes.
     // Linear alpha fade over their 0.4 s lifetime.
@@ -2100,14 +2161,14 @@ class OrcSilo {
       ctx.fillStyle = '#444444';
       this._smokeTrailParticles.forEach(p => {
         ctx.globalAlpha = Math.max(0, 1.0 - p.age / 0.4);
-        ctx.fillRect(Math.round(p.worldX - cameraX), Math.round(p.y), 2, 2);
+        ctx.fillRect(Math.round(p.worldX - cameraScrollX), Math.round(p.y), 2, 2);
       });
       ctx.globalAlpha = 1.0;
     }
 
     this._missiles.forEach(m => {
       if (!m.active) return;
-      const sx = Math.round(m.worldX - cameraX);
+      const sx = Math.round(m.worldX - cameraScrollX);
       const sy = Math.round(m.y);
 
       // Rotation angle: derive from velocity so it always matches actual travel direction.
@@ -2247,7 +2308,7 @@ class OrcSilo {
     // ---- Mid-air missile explosions (shot down by player) ----
     // Rendered in screen-space after all missile sprites so they draw on top.
     this._midairExplosions.forEach(ex => {
-      const esx   = Math.round(ex.worldX - cameraX);
+      const esx   = Math.round(ex.worldX - cameraScrollX);
       const alpha = ex.timer < 0.3 ? 1.0 : Math.max(0, 1.0 - (ex.timer - 0.3) / 0.3);
       ctx.globalAlpha = alpha;
 
