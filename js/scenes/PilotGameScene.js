@@ -192,13 +192,12 @@ class PilotGameScene extends Phaser.Scene {
     // DEBUG PANEL — remove before release
     this._lastDebugEvent = '';
     this._lastBolt = null;
-    this._debugText = this.add.text(10, 10, '', {
-      fontFamily: 'monospace',
-      fontSize:   '11px',
-      color:      '#ffffff',
-      backgroundColor: 'rgba(0,0,0,0.6)',
-      padding:    { x: 4, y: 4 },
-    }).setScrollFactor(0).setDepth(200);
+    this._debugText = this.add.text(10, 10, 'DEBUG', {
+      fontSize: '14px',
+      fill: '#ffff00',
+      backgroundColor: '#000000',
+      padding: { x: 6, y: 6 }
+    }).setScrollFactor(0).setDepth(999);
   }
 
   // ==========================================================
@@ -271,23 +270,17 @@ class PilotGameScene extends Phaser.Scene {
 
     // DEBUG PANEL — remove before release
     if (this._debugText) {
-      const cannons = this._enemyManager.getCannons();
-      const silos   = this._enemyManager.getSilos();
-      const cannonCount = typeof cannons.getLength === 'function'
-        ? cannons.getLength() : cannons.length;
-      const siloCount = typeof silos.getLength === 'function'
-        ? silos.getLength() : silos.length;
-      const boltsActive = this.playerBolts.countActive(true);
-      const boltBody = this._lastBolt && this._lastBolt.body
-        ? `a=${this._lastBolt.body.active} e=${this._lastBolt.body.enable}`
-        : 'none';
-      this._debugText.setText(
-        `CannonGrp: ${cannonCount}\n` +
-        `SiloGrp: ${siloCount}\n` +
-        `Bolts active: ${boltsActive}\n` +
-        `Last event: ${this._lastDebugEvent}\n` +
-        `Bolt body: ${boltBody}`
-      );
+      const cg = this._enemyManager.getCannons();
+      const sg = this._enemyManager.getSilos();
+      const cgCount = cg && cg.getLength ? cg.getLength() : (cg ? cg.length : 'null');
+      const sgCount = sg && sg.getLength ? sg.getLength() : (sg ? sg.length : 'null');
+      const boltCount = this._playerBolts && this._playerBolts.countActive ? this._playerBolts.countActive(true) : 'no group';
+      this._debugText.setText([
+        'CG:' + cgCount,
+        'SG:' + sgCount,
+        'Bolts:' + boltCount,
+        'Event:' + (this._lastDebugEvent || 'none'),
+      ].join('\n'));
     }
 
     this._input.clearTaps();
