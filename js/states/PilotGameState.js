@@ -1426,6 +1426,286 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
     });
   });
 
+  // ---- Voidheart ore veins ----
+  // Surface fractures where Voidheart ore runs close to the alien ground.
+  // Each vein: a jagged main crack of 8-14 × 5px segments offset 1-2px
+  // vertically between each step, rendered as 3 parallel offset rows
+  // (dark border / main crack / animated pulsing core). Gold veining
+  // appears at every 3rd segment; a 1px stain band flanks the crack on
+  // each side. 2-3 branch cracks split off at ~30-45 degrees from the
+  // main fracture. A soft glow rectangle is drawn before the crack and
+  // widens at peak pulse brightness.
+  //
+  // Each vein consumes exactly 2 srf() calls (fx, fy). All other random
+  // variation uses a local position-keyed RNG (vr) so the shared counter
+  // (_n) stays predictable and existing feature positions are unchanged.
+  [
+    [100, 0.30], [280, 0.54], [450, 0.36], [630, 0.63], [810, 0.44],
+  ].forEach(([bx, by]) => {
+    const fx = Math.max(60, Math.min(900, Math.round(bx + srf() * 120 - 60)));
+    const fy = Math.max(0.15, Math.min(0.75, by + srf() * 0.18 - 0.09));
+
+    // Local RNG keyed to this vein — does NOT consume shared sr() slots.
+    let _vi = 0;
+    const vr = () => {
+      const v = ((Math.sin(fx * 11.73 + fy * 83.17 + _vi++) * 9301 + 49297) % 233280) / 233280;
+      return Math.max(0, Math.min(1, (v - 0.1715) / (0.2512 - 0.1715)));
+    };
+
+    const SEG_W   = 5;                          // horizontal px per segment
+    const numSegs = 8 + Math.floor(vr() * 7);  // 8–14 segments
+
+    // Jagged segments: y offset shifts ±1 or ±2 px between consecutive steps.
+    const segments = [];
+    let cumDY = 0;
+    for (let i = 0; i < numSegs; i++) {
+      const jump = vr() > 0.65 ? 2 : 1;
+      cumDY += jump * (vr() > 0.5 ? 1 : -1);
+      segments.push({ sx: i * SEG_W, dy: cumDY });
+    }
+
+    // Gold pixels: 2×1 px at every 3rd segment, placed adjacent to the crack.
+    const goldPixels = [];
+    for (let i = 2; i < numSegs; i += 3) {
+      goldPixels.push({ sx: segments[i].sx, dy: segments[i].dy, side: vr() > 0.5 ? 1 : -1 });
+    }
+
+    // Branch cracks: 2-3 sub-fractures splitting off at 30-45 degrees.
+    const numBranches = 2 + Math.floor(vr() * 2);
+    const branches = [];
+    for (let i = 0; i < numBranches; i++) {
+      const segIdx = 1 + Math.floor(vr() * (numSegs - 2));
+      const slope  = (0.55 + vr() * 0.45) * (vr() > 0.5 ? 1 : -1); // ≈ tan(29°–45°)
+      branches.push({ segIdx, slope, len: 4 + Math.floor(vr() * 5) });
+    }
+
+    const midIdx = Math.floor(numSegs / 2);
+
+    features.push({
+      x: fx, y: fy,
+      segments, goldPixels, branches, midIdx, SEG_W,
+
+      draw(ctx, px, py, f, t) {
+        const ox = Math.floor(px);
+        const oy = Math.floor(py);
+
+        // 2-second pulse: 0 → 1 → 0 via sin (period = 2 s)
+        const pulse   = (Math.sin(t * Math.PI) + 1) / 2;
+        const coreCol = pulse > 0.5 ? '#cc0060' : '#6a0040';
+        const glowW   = pulse > 0.82 ? 4 : 2;
+
+        // === SURFACE GLOW — drawn first (behind the crack) ===
+        // Covers a 3-segment span centred on the vein's midpoint.
+        const midSeg = f.segments[f.midIdx];
+        ctx.fillStyle = '#1a0018';
+        ctx.fillRect(
+          ox + midSeg.sx - glowW,
+          oy + midSeg.dy - glowW,
+          f.SEG_W * 3 + glowW * 2,
+          3 + glowW * 2);
+
+        // === SURFACE STAINING — 1px discoloration band on each side ===
+        ctx.fillStyle = '#1a0818';
+        for (const seg of f.segments) {
+          ctx.fillRect(ox + seg.sx, oy + seg.dy - 1, f.SEG_W, 1); // above
+          ctx.fillRect(ox + seg.sx, oy + seg.dy + 3, f.SEG_W, 1); // below core
+        }
+
+        // === 3-LAYER CRACK — outer dark border / main / animated core ===
+        for (const seg of f.segments) {
+          const sx = ox + seg.sx;
+          const sy = oy + seg.dy;
+          ctx.fillStyle = '#0d0804'; ctx.fillRect(sx, sy,     f.SEG_W, 1);
+          ctx.fillStyle = '#1a0010'; ctx.fillRect(sx, sy + 1, f.SEG_W, 1);
+          ctx.fillStyle = coreCol;   ctx.fillRect(sx, sy + 2, f.SEG_W, 1);
+        }
+
+        // === GOLD VEINING — 2×1 px at every 3rd segment ===
+        ctx.fillStyle = '#c8901a';
+        for (const g of f.goldPixels) {
+          const gx = g.side > 0
+            ? ox + g.sx + f.SEG_W      // right side of segment
+            : ox + g.sx - 2;           // left side of segment
+          ctx.fillRect(gx, oy + g.dy + 1, 2, 1);
+        }
+
+        // === BRANCH CRACKS — 1px wide, same color scheme, no animation ===
+        for (const b of f.branches) {
+          const startSeg = f.segments[b.segIdx];
+          const bx0 = ox + startSeg.sx + Math.floor(f.SEG_W / 2);
+          const by0 = oy + startSeg.dy + 1; // start at mid-crack row
+          for (let i = 0; i < b.len; i++) {
+            const bxi = bx0 + i;
+            const byi = by0 + Math.round(i * b.slope);
+            // Dark outer border on the far side of the slope direction
+            ctx.fillStyle = '#0d0804';
+            ctx.fillRect(bxi, byi - Math.sign(b.slope), 1, 1);
+            ctx.fillStyle = '#1a0010';
+            ctx.fillRect(bxi, byi, 1, 1);
+          }
+        }
+      },
+    });
+  });
+
+  // ---- Unsettling pools ----
+  // Dark viscous liquid pooling in ground depressions.
+  // Shape: 4-5 overlapping fillRect rectangles for an organic irregular
+  // outline. Base colour #0a0014 (near-black purple), inner darkest zone
+  // #060008, 1px edge border #1a0028.
+  //
+  // Surface: 6-8 highlight pixels #2a0040; the first 3 oscillate slowly
+  // (sin-driven, ±1-3 px) suggesting movement on a viscous surface; the
+  // first pixel additionally pulses to #4a0060 as if something stirs below.
+  //
+  // Second pool only: a partially submerged orc machine breaks the surface
+  // (#1a1208 angular block, #3a1808 rust edge) with 3 single-pixel bubbles
+  // rising upward at staggered phases.
+  //
+  // Each pool consumes exactly 2 srf() calls (fx, fy). All inner variation
+  // uses a local position-keyed RNG (pr).
+  [
+    [360, 0.58, false],   // plain pool
+    [720, 0.42, true],    // pool with submerged orc equipment
+  ].forEach(([bx, by, hasEquip]) => {
+    const fx = Math.max(60, Math.min(900, Math.round(bx + srf() * 100 - 50)));
+    const fy = Math.max(0.20, Math.min(0.75, by + srf() * 0.16 - 0.08));
+
+    // Local RNG keyed to this pool.
+    let _pi = 0;
+    const pr = () => {
+      const v = ((Math.sin(fx * 19.31 + fy * 61.73 + _pi++) * 9301 + 49297) % 233280) / 233280;
+      return Math.max(0, Math.min(1, (v - 0.1715) / (0.2512 - 0.1715)));
+    };
+
+    const baseW = 30 + Math.floor(pr() * 18); // 30–47 px wide
+    const baseH = 12 + Math.floor(pr() * 7);  // 12–18 px tall
+
+    // 4-5 overlapping rects — centred on the feature position.
+    const numRects = 4 + Math.floor(pr() * 2);
+    const rects = [{ dx: 0, dy: 0, w: baseW, h: baseH }]; // base rect
+    for (let i = 1; i < numRects; i++) {
+      rects.push({
+        dx: Math.floor((pr() - 0.5) * baseW * 0.5),
+        dy: Math.floor((pr() - 0.5) * baseH * 0.4),
+        w:  Math.floor(baseW * (0.35 + pr() * 0.45)),
+        h:  Math.floor(baseH * (0.40 + pr() * 0.40)),
+      });
+    }
+
+    const innerW = Math.floor(baseW * 0.45);
+    const innerH = Math.floor(baseH * 0.45);
+
+    // 6-8 surface highlight pixels; first 3 are animated, first is pulser.
+    const numHL = 6 + Math.floor(pr() * 3);
+    const highlights = [];
+    for (let i = 0; i < numHL; i++) {
+      highlights.push({
+        bx:       Math.floor(pr() * (baseW - 6)) + 3, // 3 .. baseW-3
+        by:       Math.floor(pr() * (baseH - 4)) + 2, // 2 .. baseH-2
+        freqX:    0.12 + pr() * 0.20,                 // oscillation freq (cycles/s)
+        freqY:    0.08 + pr() * 0.14,
+        ampX:     1 + Math.floor(pr() * 3),            // 1-3 px amplitude
+        ampY:     1 + Math.floor(pr() * 2),
+        animated: i < 3,
+        pulser:   i === 0,
+      });
+    }
+
+    // Submerged orc equipment (second pool only).
+    let equip = null;
+    if (hasEquip) {
+      const eW = 9  + Math.floor(pr() * 7);  // 9–15 px wide
+      const eH = 5  + Math.floor(pr() * 4);  // 5–8 px tall
+      equip = {
+        eW, eH,
+        edx: Math.floor((pr() - 0.5) * baseW * 0.4),  // center-offset in pool
+        edy: -Math.floor(eH * 0.35),                   // breaks pool surface
+        bubbles: [
+          { bdx: Math.floor(pr() * 5) - 2, phase: 0.00, speed: 3.5 + pr() * 2 },
+          { bdx: Math.floor(pr() * 5) - 2, phase: 0.33, speed: 2.8 + pr() * 2 },
+          { bdx: Math.floor(pr() * 5) - 2, phase: 0.67, speed: 4.2 + pr() * 2 },
+        ],
+      };
+    }
+
+    features.push({
+      x: fx, y: fy,
+      rects, innerW, innerH, baseW, baseH, highlights, equip,
+
+      draw(ctx, px, py, f, t) {
+        // Feature is centred on (px, py)
+        const left = Math.floor(px - f.baseW / 2);
+        const top  = Math.floor(py - f.baseH / 2);
+
+        // === POOL BASE — 4-5 overlapping rects ===
+        ctx.fillStyle = '#0a0014';
+        for (const r of f.rects) {
+          ctx.fillRect(left + r.dx, top + r.dy, r.w, r.h);
+        }
+
+        // Inner darkest zone (deepest center)
+        ctx.fillStyle = '#060008';
+        ctx.fillRect(
+          left + Math.floor((f.baseW - f.innerW) / 2),
+          top  + Math.floor((f.baseH - f.innerH) / 2),
+          f.innerW, f.innerH);
+
+        // 1px edge border on the base rect
+        ctx.fillStyle = '#1a0028';
+        ctx.fillRect(left,                top,                f.baseW, 1); // top
+        ctx.fillRect(left,                top + f.baseH - 1, f.baseW, 1); // bottom
+        ctx.fillRect(left,                top,                1, f.baseH); // left
+        ctx.fillRect(left + f.baseW - 1, top,                1, f.baseH); // right
+
+        // === SURFACE HIGHLIGHTS ===
+        for (const h of f.highlights) {
+          let hx = left + h.bx;
+          let hy = top  + h.by;
+          if (h.animated) {
+            // Sin-driven drift — highlights appear to shift on the viscous surface
+            hx += Math.round(Math.sin(t * h.freqX * Math.PI * 2) * h.ampX);
+            hy += Math.round(Math.sin(t * h.freqY * Math.PI * 2) * h.ampY);
+          }
+          // Clamp inside pool interior
+          hx = Math.max(left + 1, Math.min(left + f.baseW - 2, hx));
+          hy = Math.max(top  + 1, Math.min(top  + f.baseH - 2, hy));
+
+          let hCol = '#2a0040';
+          if (h.pulser) {
+            // Occasional brighter pulse as if something moves beneath
+            const bright = (Math.sin(t * 0.71 * Math.PI * 2 + 1.57) + 1) / 2;
+            hCol = bright > 0.88 ? '#4a0060' : '#2a0040';
+          }
+          ctx.fillStyle = hCol;
+          ctx.fillRect(hx, hy, 1, 1);
+        }
+
+        // === SUBMERGED ORC EQUIPMENT (second pool only) ===
+        if (f.equip) {
+          const eq  = f.equip;
+          const eqX = left + Math.floor(f.baseW / 2) + eq.edx - Math.floor(eq.eW / 2);
+          const eqY = top  + Math.floor(f.baseH / 2) + eq.edy;
+
+          // Dark angular machine silhouette breaking the pool surface
+          ctx.fillStyle = '#1a1208';
+          ctx.fillRect(eqX, eqY, eq.eW, eq.eH);
+          // Rust highlight along the right edge
+          ctx.fillStyle = '#3a1808';
+          ctx.fillRect(eqX + eq.eW - 1, eqY, 1, eq.eH);
+
+          // Bubbles: 3 × 1px rising upward from the equipment, staggered phases
+          const RISE = 10; // px of total rise before wrapping
+          ctx.fillStyle = '#2a0040';
+          for (const b of eq.bubbles) {
+            const riseAmt = ((t * b.speed + b.phase * RISE) % RISE + RISE) % RISE;
+            ctx.fillRect(eqX + Math.floor(eq.eW / 2) + b.bdx, eqY - Math.floor(riseAmt), 1, 1);
+          }
+        }
+      },
+    });
+  });
+
   return features;
 }
 
