@@ -45,9 +45,11 @@
   <script src="js/entities/OrcSilo.js"></script>
 
   <!--
-    Systems — EnemyManager depends on OrcCannon, OrcSilo, and Projectile,
-    so it loads after those entities and before the scenes.
+    Systems — EnemyManager depends on OrcCannon, OrcSilo, and Projectile.
+    TerrainSystem depends only on Phaser (no entity dependencies).
+    Both load after entities and before the scenes that use them.
   -->
+  <script src="js/systems/TerrainSystem.js"></script>
   <script src="js/systems/EnemyManager.js"></script>
 
   <!--
