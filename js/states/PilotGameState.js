@@ -818,7 +818,7 @@ class PilotGameState {
   _drawGround(ctx, W, H) {
     const horizonY = Math.floor(H * 0.72);
     const groundH  = H - horizonY;
-    const STEP     = 4; // screen-pixel column width for terrain profile rendering
+    const STEP     = 2; // screen-pixel column width for terrain profile rendering
 
     // Sky extension: terrain can dip 16 px below horizonY; fill that buffer
     // with the bottom sky colour so no gap appears on downward slopes.
@@ -826,7 +826,7 @@ class PilotGameState {
     ctx.fillRect(0, horizonY, W, 18);
 
     // ---- Column-by-column terrain rendering ----
-    // Each 4 px column is processed independently so the full terrain height
+    // Each 2 px column is processed independently so the full terrain height
     // profile drives every visual layer — texture bands, cliff strata, horizon
     // transition, surface noise and scattered rocks all follow the height curve.
     for (let sx = 0; sx < W; sx += STEP) {
@@ -926,7 +926,7 @@ class PilotGameState {
       }
 
       // ---- SURFACE NOISE PASS ----
-      // Every 4 px column: one 1×1 px fleck that is one tone lighter or darker
+      // Every 2 px column: one 1×1 px fleck that is one tone lighter or darker
       // than its neighbours, creating micro-variation across the surface layer.
       const nHash = (worldX * 3 + 17) % 7;
       if (nHash < 3) {
