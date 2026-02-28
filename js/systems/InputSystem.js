@@ -84,9 +84,9 @@ class InputSystem {
     // ---- Button hit regions in game coords (top-left origin) ----
     // Kept in sync with _buildButtons() positions.
     this._buttonBounds = [
-      { x: 380, y: 471, w: 200, h: 48 },  // WEAPON SELECT
-      { x: 798, y: 471, w: 140, h: 48 },  // EVADE
-      { x: 798, y: 411, w: 140, h: 48 },  // FIRE
+      { x: 380, y: 471, w: 200, h: 48, btn: null },  // WEAPON SELECT
+      { x: 798, y: 471, w: 140, h: 48, btn: null },  // EVADE
+      { x: 798, y: 411, w: 140, h: 48, btn: null },  // FIRE
     ];
 
     this._buildButtons();
@@ -164,6 +164,7 @@ class InputSystem {
       this.weaponSelectPressed = true;
       this._animPress(this.weaponSelectBtn);
     });
+    this._buttonBounds[0].btn = this.weaponSelectBtn;
 
     // ---- EVADE — bottom right ----
     this.evadeBtn = this._makeButton(
@@ -174,6 +175,7 @@ class InputSystem {
       this.evadePressed = true;
       this._animPress(this.evadeBtn);
     });
+    this._buttonBounds[1].btn = this.evadeBtn;
 
     // ---- FIRE — above EVADE, bottom right ----
     this.fireBtn = this._makeButton(
@@ -184,6 +186,7 @@ class InputSystem {
       this.firePressed = true;
       this._animPress(this.fireBtn);
     });
+    this._buttonBounds[2].btn = this.fireBtn;
   }
 
   /**
@@ -298,9 +301,10 @@ class InputSystem {
     if (id === this._rightPointerId) this._releaseRightStick();
   }
 
-  /** Returns true when (x, y) overlaps any button's hit region. */
+  /** Returns true when (x, y) overlaps any visible button's hit region. */
   _isOnButton(x, y) {
     return this._buttonBounds.some(b =>
+      (!b.btn || b.btn.visible) &&
       x >= b.x && x <= b.x + b.w &&
       y >= b.y && y <= b.y + b.h
     );

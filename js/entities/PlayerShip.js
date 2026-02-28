@@ -24,8 +24,8 @@
      color           hex    → 0x42a5f5, etc.
    ============================================================ */
 
-// Increase for snappier acceleration response, decrease for heavier feel
-const ACCEL_FACTOR = 6.0;
+// Drag removed — lerp handles both accel and decel. Increase ACCEL_FACTOR for snappier feel
+const ACCEL_FACTOR = 12.0;
 
 class PlayerShip extends Phaser.GameObjects.Graphics {
 
@@ -64,7 +64,6 @@ class PlayerShip extends Phaser.GameObjects.Graphics {
 
     // Configure the arcade body
     this.body.setMaxVelocity(this._maxSpeed, this._maxSpeed);
-    this.body.setDrag(800, 800);
     this.body.setCollideWorldBounds(true);
     // Center the hitbox on the ship's local origin
     this.body.setSize(this._shipW, this._shipH);
@@ -128,6 +127,13 @@ class PlayerShip extends Phaser.GameObjects.Graphics {
        Math.round(w * 0.24),
        Math.round(h * 0.40)
     );
+
+    // Fire feedback — bright white strokeRect for one frame
+    if (this._fireFeedbackFrame) {
+      this.lineStyle(2, 0xffffff, 1);
+      this.strokeRect(-w / 2, -h / 2, w, h);
+      this._fireFeedbackFrame = false;
+    }
   }
 
   // ================================================================
