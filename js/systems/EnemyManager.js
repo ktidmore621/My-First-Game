@@ -37,6 +37,11 @@ class EnemyManager {
     this._enemies    = []; // mixed OrcCannon | OrcSilo array
     this._enemyBolts = enemyBolts;
     this._missiles   = missiles;
+    this._battlefieldW = 4800;
+
+    // Seeded random — same seed → same layout within a session
+    this._seed  = Math.random() * 1000;
+    this._randN = 0;
 
     // Static physics groups for arcade overlap detection.
     // PilotGameScene passes these to physics.add.overlap() so Phaser's
@@ -50,6 +55,11 @@ class EnemyManager {
     this._ensureParticleTexture();
 
     this._generateBattlefield();
+  }
+
+  // Deterministic PRNG matching TerrainSystem's sine-hash approach.
+  _seededRand() {
+    return ((Math.sin(this._seed + this._randN++) * 9301 + 49297) % 233280) / 233280;
   }
 
   // ================================================================
@@ -70,53 +80,57 @@ class EnemyManager {
 
   // ================================================================
   // BATTLEFIELD GENERATION
-  // Spawns cannons and silos at hand-crafted world-space X positions
-  // spread across the 4800 px battlefield. Positions are staggered so
-  // the player always has time to react between threats.
-  //
-  // Layout overview (world X):
-  //   ~600   — first cannon (warm-up, no silo surprise yet)
-  //   ~900   — first silo  (introduces the missile mechanic)
-  //   ~1300  — two cannons (flanking pair)
-  //   ~1900  — silo + cannon combo
-  //   ~2400  — dense cannon cluster (mid-game pressure)
-  //   ~2900  — silo (second silo encounter)
-  //   ~3300–3600 — two more cannons
-  //   ~4000  — final silo
-  //   ~4300–4500 — two closing cannons
+  // Procedural cursor-based placement: a guaranteed mix of silos and
+  // cannons is shuffled, then additional cannons fill the remaining
+  // battlefield.  A forward-marching cursor with per-enemy jitter
+  // ensures every structure has at least MIN_GAP px of clear space
+  // between adjacent footprint edges.
   // ================================================================
 
   _generateBattlefield() {
-    const H = this._groundY; // shorthand
+    const H = this._groundY;
 
-    // ---- Build a sorted placement list from both enemy types ----
-    // Merge cannons and silos into one list sorted by worldX so we can
-    // verify spacing between ALL adjacent structures (not just same-type).
-    const placements = [
-      { type: 'OrcCannon', x: 600 },
-      { type: 'OrcSilo',   x: 900 },
-      { type: 'OrcCannon', x: 1100 },
-      { type: 'OrcCannon', x: 1500 },
-      { type: 'OrcSilo',   x: 1900 },
-      { type: 'OrcCannon', x: 1950 },
-      { type: 'OrcCannon', x: 2350 },
-      { type: 'OrcCannon', x: 2700 },
-      { type: 'OrcSilo',   x: 2900 },
-      { type: 'OrcCannon', x: 3300 },
-      { type: 'OrcCannon', x: 3650 },
-      { type: 'OrcSilo',   x: 4050 },
-      { type: 'OrcCannon', x: 4300 },
-      { type: 'OrcCannon', x: 4550 },
-    ];
+    const CANNON_HALF     = 28;
+    const SILO_HALF       = 140;
+    const MIN_GAP         = 100;
+    const SAFE_START      = 700;
+    const BATTLEFIELD_END = this._battlefieldW - 500;
 
-    console.log('[EnemyManager] === PLACEMENT DEBUG START ===');
-    let prevX = null;
-    let prevType = null;
-    placements.forEach((p, i) => {
-      const gap = prevX !== null ? p.x - prevX : 'N/A';
-      console.log(`[EnemyManager] #${i} type=${p.type} centerX=${p.x} gap_from_prev=${gap} prevType=${prevType || 'none'}`);
+    // Guaranteed sequence: balanced silo/cannon mix
+    const guaranteed = ['silo', 'cannon', 'silo', 'cannon', 'silo'];
 
-      if (p.type === 'OrcCannon') {
+    // Fisher-Yates shuffle using seeded random
+    for (let i = guaranteed.length - 1; i > 0; i--) {
+      const j = Math.floor(this._seededRand() * (i + 1));
+      [guaranteed[i], guaranteed[j]] = [guaranteed[j], guaranteed[i]];
+    }
+
+    // Append additional cannons to fill the battlefield
+    const order = [...guaranteed];
+    const maxSlots = Math.ceil((BATTLEFIELD_END - SAFE_START) / 150);
+    for (let i = 0; i < maxSlots; i++) {
+      order.push('cannon');
+    }
+
+    // Cursor-based placement loop
+    let cursor = SAFE_START;
+    const placements = [];
+
+    for (const type of order) {
+      const half    = type === 'silo' ? SILO_HALF : CANNON_HALF;
+      const centerX = cursor + half;
+      const jitter  = 50 + Math.floor(this._seededRand() * 150);
+      const pos     = centerX + jitter;
+
+      cursor = pos + half + MIN_GAP;
+      if (cursor > BATTLEFIELD_END) break;
+
+      placements.push({ type, x: pos });
+    }
+
+    // Instantiate enemies at their procedural positions
+    placements.forEach(p => {
+      if (p.type === 'cannon') {
         const cannon = new OrcCannon(this._scene, p.x, H, this._enemyBolts);
         this._enemies.push(cannon);
         this._cannonGroup.add(cannon);
@@ -125,12 +139,9 @@ class EnemyManager {
         this._enemies.push(silo);
         this._siloGroup.add(silo);
       }
-
-      prevX = p.x;
-      prevType = p.type;
     });
-    console.log(`[EnemyManager] === PLACEMENT DEBUG END === (${placements.length} enemies placed)`);
-    console.log('[EnemyManager] NOTE: using hardcoded position arrays — no cursor/jitter system found');
+
+    console.log(`[EnemyManager] ${placements.length} enemies placed, cursor=${cursor}`);
   }
 
   // ================================================================
