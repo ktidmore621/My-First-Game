@@ -138,11 +138,10 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
     this.setDepth(5); // below PlayerShip (depth 10), above ground (depth 1)
 
     // ---- Arcade physics static body for player-bolt overlap detection ----
-    // Covers the full 120 × 28 px above-ground structure.
-    // offset(-60, -28) aligns the body top-left to (worldX-60, groundY-28).
+    // offset(-60, -180) aligns the body top-left to (worldX-60, groundY-180).
     scene.physics.add.existing(this, true);   // true = static body
-    this.body.setSize(120, 28);
-    this.body.setOffset(-60, -28);
+    this.body.setSize(120, 180); // Hitbox covers full structure height — 180px from ground up to top of rim and fence
+    this.body.setOffset(-60, -180);
 
     // ---- Shared missile group (Phaser physics proxies for collision) ----
     // OrcSilo fires invisible Projectile proxies into this group and keeps
