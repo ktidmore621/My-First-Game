@@ -142,8 +142,8 @@ class LightingSystem {
     const H = 540;
 
     this._darkLayer.clear();
-    // Flat dark overlay at 0.30 alpha — alien atmospheric tint
-    this._darkLayer.fillStyle(0x000000, 0.30);
+    // Flat dark overlay at 0.18 alpha — subtle atmospheric tint without crushing details
+    this._darkLayer.fillStyle(0x000000, 0.18);
     this._darkLayer.fillRect(0, 0, W, H);
   }
 
