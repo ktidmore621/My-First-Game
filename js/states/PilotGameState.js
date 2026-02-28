@@ -231,10 +231,15 @@ class PilotGameState {
       const tmp = types[i]; types[i] = types[j]; types[j] = tmp;
     }
 
-    // Step 3 — Place enemies with guaranteed minimum spacing
+    // Step 3 — Terrain seed and height map generated BEFORE enemy placement
+    // so each enemy receives a terrain-accurate ground anchor Y.
+    this._terrainSeed    = Math.random() * 1000;
+    this._terrainHeights = this._buildTerrainHeights();
+
+    // Step 4 — Place enemies with guaranteed minimum spacing
     const CANNON_FOOTPRINT = 80;   // world-px width of one OrcCannon structure
     const SILO_FOOTPRINT   = 280;  // world-px width of one OrcSilo including perimeter
-    const groundY          = Math.round(this._H * 0.72);
+    const baseGroundY      = Math.round(this._H * 0.72);
     const rightBound       = config.battlefieldWidth - config.safeZoneEnd;
 
     let cursor    = config.safeZoneStart;
@@ -250,23 +255,81 @@ class PilotGameState {
       // Honour right-edge safe zone — stop early if needed
       if (position + footprint > rightBound) break;
 
+      // Anchor each enemy to the terrain surface at its world-space centre
+      const midX    = position + footprint / 2;
+      const enemyGY = Math.round(baseGroundY - this._getTerrainHeightAt(midX));
+
       this._enemies.push(
         type === 'cannon'
-          ? new OrcCannon(position, groundY)
-          : new OrcSilo(position, groundY)
+          ? new OrcCannon(position, enemyGY)
+          : new OrcSilo(position, enemyGY)
       );
       cursor = position + footprint; // advance past this structure
     }
 
-    // Step 5 — Terrain seed: float 0–1000, used by _buildGroundFeatures()
-    this._terrainSeed = Math.random() * 1000;
-
-    // Step 4 — Console report for verification
+    // Step 5 — Console report for verification
     const typeList = this._enemies.map(e => e.constructor.name).join(', ');
     console.log(
       `[Battlefield] Generated ${this._enemies.length} enemies across ${this._BATTLEFIELD_W}px battlefield`
     );
     console.log(`[Battlefield] Terrain seed: ${this._terrainSeed.toFixed(1)} | Placement: ${typeList}`);
+    console.log(`[Battlefield] Terrain heights: ${this._terrainHeights.length} samples every 32 px | range −14…+10 px`);
+  }
+
+  // ================================================================
+  // TERRAIN HEIGHT MAP
+  // ================================================================
+
+  // Builds the terrain height array — one sample every 32 world-px across
+  // the full battlefield. For a 5000 px arena that is 157 samples
+  // (positions 0, 32, 64 … 4992). Heights range from −14 to +10 px
+  // relative to the baseline horizonY (positive = raised, negative = dipped).
+  //
+  // The seeded-random formula mirrors _buildGroundFeatures so both systems
+  // share a single reproducible seed. Two smoothing passes convert the raw
+  // noise into gentle rolling hills.
+  _buildTerrainHeights() {
+    const STEP  = 32;
+    const count = Math.floor(this._BATTLEFIELD_W / STEP) + 1; // 157 for 5000 px
+    const seed  = this._terrainSeed;
+
+    // Seeded random — identical formula to _buildGroundFeatures for consistency
+    let _n = 0;
+    const sr  = () => ((Math.sin(seed + _n++) * 9301 + 49297) % 233280) / 233280;
+    // Normalise the [~0.1715, ~0.2512] output range to [0, 1]
+    const srf = () => Math.max(0, Math.min(1, (sr() - 0.1715) / (0.2512 - 0.1715)));
+
+    // Raw heights: map [0, 1] → [−14, +10]  (24 px total range)
+    const heights = new Array(count);
+    for (let i = 0; i < count; i++) {
+      heights[i] = srf() * 24 - 14;
+    }
+
+    // Smooth twice: each value becomes a weighted average of itself and its
+    // two neighbours, converting jagged noise into gentle rolling hills.
+    //   height[i] = height[i−1] × 0.25 + height[i] × 0.50 + height[i+1] × 0.25
+    for (let pass = 0; pass < 2; pass++) {
+      const smoothed = heights.slice(); // copy before modifying in place
+      for (let i = 1; i < count - 1; i++) {
+        smoothed[i] = heights[i - 1] * 0.25 + heights[i] * 0.5 + heights[i + 1] * 0.25;
+      }
+      for (let i = 0; i < count; i++) heights[i] = smoothed[i];
+    }
+
+    return heights;
+  }
+
+  // Returns the interpolated terrain height (px) at any world-space X.
+  // Linear interpolation between the two nearest 32 px sample points gives
+  // smooth height transitions with no visible stepping even at 4 px columns.
+  // Clamped at both ends so querying outside [0, BATTLEFIELD_W] is safe.
+  _getTerrainHeightAt(worldX) {
+    const STEP = 32;
+    const raw  = worldX / STEP;
+    const i0   = Math.max(0, Math.min(Math.floor(raw), this._terrainHeights.length - 1));
+    const i1   = Math.min(i0 + 1, this._terrainHeights.length - 1);
+    const t    = raw - Math.floor(raw);
+    return this._terrainHeights[i0] + (this._terrainHeights[i1] - this._terrainHeights[i0]) * t;
   }
 
   enter() {
@@ -613,26 +676,62 @@ class PilotGameState {
   //   As _cameraX grows (moving right) shift grows, tiles march leftward.
   //   When _cameraX stops changing the tiles lock in place.
   _drawGround(ctx, W, H) {
-    const horizonY = H * 0.72;
+    const horizonY = Math.floor(H * 0.72);
     const groundH  = H - horizonY;
+    const STEP     = 4; // screen-pixel column width for terrain profile rendering
 
-    // Flat banded ground — three colour strips, no gradients (Visual Style Guide rule 1)
-    ctx.fillStyle = '#4a3820';                                               // Sandy tan (near horizon)
-    ctx.fillRect(0, Math.floor(horizonY),                              W, Math.floor(groundH * 0.30));
+    // Sky extension: fills the 16 px buffer below the sky baseline.
+    // Terrain can dip up to 14 px below horizonY; without this fill a gap
+    // would appear between the flat sky bands and a dipped terrain surface.
+    ctx.fillStyle = '#1e3a52'; // horizon sky colour — matches _drawSky bottom band
+    ctx.fillRect(0, horizonY, W, 16);
 
-    ctx.fillStyle = '#3c2e16';                                               // Mid earth
-    ctx.fillRect(0, Math.floor(horizonY + groundH * 0.30),             W, Math.floor(groundH * 0.40));
+    // Precompute the two upper band heights (proportions match the original flat layout)
+    const bandA = Math.floor(groundH * 0.30); // sandy top   (30 %)
+    const bandB = Math.floor(groundH * 0.40); // mid earth   (40 %)
+    // Dark base occupies the remaining 30 % — drawn per column to canvas bottom
 
-    ctx.fillStyle = '#2a2010';                                               // Dark base (screen bottom)
-    ctx.fillRect(0, Math.floor(horizonY + groundH * 0.70),             W, Math.ceil(groundH  * 0.30));
+    // Render the ground column by column following the seeded terrain height profile.
+    // _getTerrainHeightAt() linearly interpolates between 32 px samples so there
+    // is no visible stepping even at 4 px column width.
+    for (let sx = 0; sx < W; sx += STEP) {
+      const worldX   = sx + this._cameraX;
+      const height   = this._getTerrainHeightAt(worldX);
+      const surfaceY = Math.round(horizonY - height);
 
-    // Horizon edge — 2px fillRect, not strokeRect, to avoid sub-pixel bleed
-    ctx.fillStyle = '#5e4a28';
-    ctx.fillRect(0, Math.floor(horizonY), W, 2);
+      // Sandy top band
+      ctx.fillStyle = '#4a3820';
+      ctx.fillRect(sx, surfaceY, STEP, bandA);
 
-    // Scroll ground detail tiles using _cameraX as the source.
-    // _cameraX is the world-left edge of the screen; modding by TILE_W
-    // gives the sub-tile pixel offset to shift the repeating pattern.
+      // Mid earth band
+      ctx.fillStyle = '#3c2e16';
+      ctx.fillRect(sx, surfaceY + bandA, STEP, bandB);
+
+      // Dark base — extends flush to the canvas bottom regardless of terrain height
+      ctx.fillStyle = '#2a2010';
+      ctx.fillRect(sx, surfaceY + bandA + bandB, STEP, H - (surfaceY + bandA + bandB));
+
+      // Exposed rock face: where adjacent 32 px terrain samples differ by more
+      // than 6 px the slope is steep enough to reveal exposed rock — draw a
+      // 4 px darker band just below the surface edge line.
+      const si = Math.floor(worldX / 32);
+      if (si > 0 && si < this._terrainHeights.length) {
+        const hDiff = Math.abs(
+          this._terrainHeights[si] - this._terrainHeights[Math.max(0, si - 1)]
+        );
+        if (hDiff > 6) {
+          ctx.fillStyle = '#1a0e06'; // exposed rock — darker than sandy surface
+          ctx.fillRect(sx, surfaceY + 2, STEP, 4);
+        }
+      }
+
+      // Terrain surface edge — 2 px bright seam at the ground top
+      ctx.fillStyle = '#5e4a28';
+      ctx.fillRect(sx, surfaceY, STEP, 2);
+    }
+
+    // Ground detail features — tile-based, camera-driven (same tiling as before).
+    // _drawGroundTile now adjusts each feature's Y to the local terrain surface.
     const shift = this._cameraX % this._TILE_W;
     for (let tileX = -shift; tileX < W; tileX += this._TILE_W) {
       this._drawGroundTile(ctx, tileX, horizonY, groundH);
@@ -641,13 +740,19 @@ class PilotGameState {
 
   // Draws one full tile of ground detail at the given x position.
   // Called once or twice per frame (for the two side-by-side tiles).
-  // All feature positions are relative to tileX, so results are identical
-  // for every tile copy — this is what makes the loop seamless.
+  //
+  // Each feature's Y is now computed from the terrain surface at its world X
+  // so features sit naturally on hills and in valleys rather than at a fixed
+  // horizon baseline. World X = tileX + f.x + _cameraX.
   _drawGroundTile(ctx, tileX, horizonY, groundH) {
     this._groundFeatures.forEach(f => {
-      // f.x is the feature's position within the tile (0–960)
-      // f.y is a 0–1 fraction of ground height (0 = horizon, 1 = screen bottom)
-      f.draw(ctx, tileX + f.x, horizonY + f.y * groundH, f);
+      // Resolve the feature's world-space X for this tile copy and look up
+      // the interpolated terrain height at that position.
+      const worldX   = tileX + f.x + this._cameraX;
+      const tHeight  = this._getTerrainHeightAt(worldX);
+      const surfaceY = horizonY - tHeight;
+      // f.y = 0 → right at terrain surface; f.y = 1 → bottom of ground area
+      f.draw(ctx, tileX + f.x, surfaceY + f.y * groundH, f);
     });
   }
 
