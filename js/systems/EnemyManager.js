@@ -142,6 +142,7 @@ class EnemyManager {
     });
 
     console.log(`[EnemyManager] ${placements.length} enemies placed, cursor=${cursor}`);
+    console.log('cannonGroup count=' + this._cannonGroup.getLength() + ' siloGroup count=' + this._siloGroup.getLength());
   }
 
   // ================================================================

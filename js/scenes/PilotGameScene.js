@@ -365,6 +365,7 @@ class PilotGameScene extends Phaser.Scene {
 
   // Pair 1 — player bolt hits OrcCannon structure
   _onBoltHitCannon(bolt, cannon) {
+    console.log('HIT CANNON');
     if (!cannon.health || !cannon.health.isAlive()) return;
 
     bolt.kill();
@@ -394,6 +395,7 @@ class PilotGameScene extends Phaser.Scene {
 
   // Pair 2 — player bolt hits OrcSilo structure
   _onBoltHitSilo(bolt, silo) {
+    console.log('HIT SILO');
     if (!silo.health || !silo.health.isAlive()) return;
 
     bolt.kill();
