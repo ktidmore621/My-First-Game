@@ -833,7 +833,7 @@ class PilotGameState {
       const tHeight  = this._getTerrainHeightAt(worldX);
       const surfaceY = horizonY - tHeight;
       // f.y = 0 → right at terrain surface; f.y = 1 → bottom of ground area
-      f.draw(ctx, tileX + f.x, surfaceY + f.y * groundH, f);
+      f.draw(ctx, tileX + f.x, surfaceY + f.y * groundH, f, this._elapsedTime);
     });
   }
 
@@ -1113,9 +1113,15 @@ function _buildGroundFeatures(seed = 0) {
   });
 
   // ---- Bomb craters ----
-  // 8 craters spread across the tile. Base positions are evenly distributed;
-  // seed varies each crater's exact x (±60 px), y (±0.10), and radius (±4).
-  // Pixel-art style: flat ejecta ring + dark pit, no ellipses (Style Guide rule 4).
+  // 8 craters with full OrcCannon-density pixel detail: debris field, raised rim,
+  // 4-layer interior, crack lines, Voidheart mineral contamination, and animated
+  // Voidheart ore exposure on large craters (r ≥ 17).
+  //
+  // Per-crater debris is pre-computed using a position-keyed local RNG (dr) so
+  // the shared seeded-random counter (_n) still advances exactly 3 times per
+  // crater — preserving all other features' positions unchanged.
+  //
+  // The draw signature adds a 5th argument `t` (elapsed seconds) for animation.
   [
     [75,  0.28, 14], [195, 0.65, 17], [330, 0.38, 11],
     [460, 0.72, 19], [560, 0.22, 13], [680, 0.58, 15],
@@ -1124,19 +1130,191 @@ function _buildGroundFeatures(seed = 0) {
     const fx = Math.max(10,   Math.min(950,  Math.round(bx + srf() * 120 - 60)));
     const fy = Math.max(0.15, Math.min(0.85, by + srf() * 0.20 - 0.10));
     const r  = Math.max(9,    Math.min(22,   Math.round(br + srf() * 8   - 4)));
+
+    // Local RNG keyed to this crater's position — does NOT consume shared sr() slots.
+    let _di = 0;
+    const dr = () => {
+      const v = ((Math.sin(fx * 17.3 + r * 53.7 + _di++) * 9301 + 49297) % 233280) / 233280;
+      return Math.max(0, Math.min(1, (v - 0.1715) / (0.2512 - 0.1715)));
+    };
+
+    const W       = Math.floor(r * 3.5);           // outer width
+    const H       = Math.max(8, Math.floor(r * 0.88)); // outer height, min 8
+    const W2      = Math.floor(W / 2);
+    const H2      = Math.floor(H / 2);
+    const iW      = W - 6;                          // interior width (inside 3-px rim)
+    const iH      = Math.max(2, H - 6);             // interior height
+    const isLarge = r >= 17;
+    const lightSide = dr() > 0.5 ? 1 : -1;         // which crater wall catches alien light
+
+    // ---- Pre-compute outer debris — rock pixels (8-12 × 1px or 2px) ----
+    const DEBRIS_COLORS = ['#3a2a1a', '#4a3822', '#2a1e12'];
+    const debris = [];
+    const numDebris = 8 + Math.floor(dr() * 5);
+    for (let i = 0; i < numDebris; i++) {
+      const ang = dr() * Math.PI * 2;
+      const dist = 1.0 + dr() * 0.8;
+      debris.push({
+        dx:  Math.round(Math.cos(ang) * (W2 + dist * 6)),
+        dy:  Math.round(Math.sin(ang) * (H2 + dist * 3)),
+        w:   dr() > 0.5 ? 2 : 1,
+        h:   dr() > 0.5 ? 2 : 1,
+        col: DEBRIS_COLORS[Math.floor(dr() * 3)],
+      });
+    }
+
+    // ---- Pre-compute displaced earth chunks — 4×3 px rectangles (3-4) ----
+    const chunks = [];
+    const numChunks = 3 + Math.floor(dr() * 2);
+    for (let i = 0; i < numChunks; i++) {
+      const ang   = dr() * Math.PI * 2;
+      const pushF = 1.15 + dr() * 0.4;
+      chunks.push({
+        dx: Math.round(Math.cos(ang) * W2 * pushF) - 2,
+        dy: Math.round(Math.sin(ang) * H2 * pushF) - 1,
+      });
+    }
+
+    // ---- Pre-compute dust streaks — 4 directions, 1-px lines from rim ----
+    const dL = 6 + Math.floor(dr() * 5);
+    const dR = 6 + Math.floor(dr() * 5);
+    const dU = 4 + Math.floor(dr() * 4);
+    const dD = 4 + Math.floor(dr() * 4);
+    const dusts = [
+      { x: -(W2 + 2 + dL), y:  0,             w: dL, h: 1 }, // left
+      { x:   W2 + 2,       y:  0,             w: dR, h: 1 }, // right
+      { x:  0,             y: -(H2 + 2 + dU), w: 1, h: dU }, // up
+      { x:  0,             y:   H2 + 2,       w: 1, h: dD }, // down
+    ];
+
+    // ---- Pre-compute crack lines — 1px horiz, every 3 rows inside interior ----
+    const cracks = [];
+    for (let row = 3; row < iH - 1; row += 3) {
+      const maxCW    = Math.max(1, iW - 7);
+      const crackW   = 3 + Math.floor(dr() * maxCW);
+      const crackOff = Math.floor(dr() * Math.max(1, iW - crackW));
+      cracks.push({ rx: crackOff, ry: row, len: crackW });
+    }
+
+    // ---- Pre-compute mineral pixels — dark purple Voidheart contamination ----
+    const minerals = [];
+    const numMin = 2 + Math.floor(dr() * 5);
+    for (let i = 0; i < numMin; i++) {
+      minerals.push({
+        rx: Math.floor(dr() * Math.max(1, iW - 1)),
+        ry: Math.floor(dr() * Math.max(1, iH - 1)),
+      });
+    }
+
+    // ---- Pre-compute Voidheart cluster + gold veins (large craters only) ----
+    const voidCluster = [];
+    const goldVeins   = [];
+    if (isLarge) {
+      const numVoid = 6 + Math.floor(dr() * 3);
+      for (let i = 0; i < numVoid; i++) {
+        voidCluster.push({ dx: Math.floor(dr() * 9) - 4, dy: Math.floor(dr() * 5) - 2 });
+      }
+      const numGold = 2 + Math.floor(dr() * 2);
+      for (let i = 0; i < numGold; i++) {
+        goldVeins.push({ dx: Math.floor(dr() * 11) - 5, dy: Math.floor(dr() * 5) - 2 });
+      }
+    }
+
     features.push({
-      x: fx, y: fy, r,
-      draw(ctx, px, py, f) {
-        // Sandy blast ring — flat rectangle (Visual Style Guide rule 4)
-        const rw = Math.floor(f.r * 3.5);
-        const rh = Math.floor(f.r * 0.88);
-        ctx.fillStyle = '#644e26';
-        ctx.fillRect(Math.floor(px - rw / 2), Math.floor(py - rh / 2), rw, rh);
-        // Dark crater pit — smaller inner rectangle
-        const pw = Math.floor(f.r * 2);
-        const ph = Math.max(4, Math.floor(f.r * 0.5));
-        ctx.fillStyle = '#100a04';
-        ctx.fillRect(Math.floor(px - pw / 2), Math.floor(py - ph / 2), pw, ph);
+      x: fx, y: fy, r, W, H, W2, H2, iW, iH, isLarge, lightSide,
+      debris, chunks, dusts, cracks, minerals, voidCluster, goldVeins,
+
+      draw(ctx, px, py, f, t) {
+        const cx = Math.floor(px);
+        const cy = Math.floor(py);
+
+        // === OUTER DEBRIS FIELD ===
+        // Rock pixels (1×1 and 2×2 in varied earthy tones)
+        for (const d of f.debris) {
+          ctx.fillStyle = d.col;
+          ctx.fillRect(cx + d.dx, cy + d.dy, d.w, d.h);
+        }
+        // Displaced earth chunks (4×3 in surface soil tone pushed outward from rim)
+        ctx.fillStyle = '#4a3820';
+        for (const c of f.chunks) {
+          ctx.fillRect(cx + c.dx, cy + c.dy, 4, 3);
+        }
+        // Dust streaks — 1-px lines in 4 directions, slightly lighter than ground
+        ctx.fillStyle = '#5e4a28';
+        for (const d of f.dusts) {
+          ctx.fillRect(cx + d.x, cy + d.y, d.w, d.h);
+        }
+
+        // === RAISED RIM ===
+        // Outer rim base shadow — 1-px border where raised earth meets surface
+        ctx.fillStyle = '#1a0e06';
+        ctx.fillRect(cx - f.W2 - 1, cy - f.H2 - 1, f.W + 2, f.H + 2);
+        // Raised rim body (3-px wide lip, displaced earth)
+        ctx.fillStyle = '#3a2814';
+        ctx.fillRect(cx - f.W2, cy - f.H2, f.W, f.H);
+        // Inner rim edge highlight — 1-px catching alien light at the top+left boundary
+        ctx.fillStyle = '#4a3820';
+        ctx.fillRect(cx - f.W2 + 3, cy - f.H2 + 2, f.iW, 1); // top inner edge
+        ctx.fillRect(cx - f.W2 + 2, cy - f.H2 + 3, 1, f.iH); // left inner edge
+
+        // === CRATER INTERIOR — 4 DEPTH LAYERS ===
+        // Drawn as nested inward rectangles; smaller craters only get 1-2 layers.
+        ctx.fillStyle = '#1a0e08'; // outer interior — disturbed deep soil
+        ctx.fillRect(cx - f.W2 + 3, cy - f.H2 + 3, f.iW, f.iH);
+        if (f.iW > 4 && f.iH > 4) {
+          ctx.fillStyle = '#120a06'; // mid interior — compressed impact zone
+          ctx.fillRect(cx - f.W2 + 5, cy - f.H2 + 5, f.iW - 4, f.iH - 4);
+        }
+        if (f.iW > 8 && f.iH > 8) {
+          ctx.fillStyle = '#0d0804'; // inner zone — deepest exposed rock
+          ctx.fillRect(cx - f.W2 + 7, cy - f.H2 + 7, f.iW - 8, f.iH - 8);
+        }
+        if (f.iW > 12 && f.iH > 12) {
+          ctx.fillStyle = '#080402'; // central pit — near-black deepest point
+          ctx.fillRect(cx - f.W2 + 9, cy - f.H2 + 9, f.iW - 12, f.iH - 12);
+        }
+
+        // === CRATER WALL DETAIL ===
+        const intL = cx - f.W2 + 3; // interior left (screen x)
+        const intT = cy - f.H2 + 3; // interior top  (screen y)
+
+        // Directional alien light — one wall is 1 tone lighter than the opposite
+        ctx.fillStyle = '#241210';
+        if (f.lightSide > 0) {
+          ctx.fillRect(cx + f.W2 - 4, intT, 1, f.iH); // right wall lighter
+        } else {
+          ctx.fillRect(intL,           intT, 1, f.iH); // left wall lighter
+        }
+        // Horizontal crack lines every 3 rows (#0d0804 on the interior)
+        ctx.fillStyle = '#0d0804';
+        for (const crack of f.cracks) {
+          ctx.fillRect(intL + crack.rx, intT + crack.ry, crack.len, 1);
+        }
+        // Mineral pixels — dark purple suggesting deep Voidheart contamination
+        ctx.fillStyle = '#1a0018';
+        for (const m of f.minerals) {
+          ctx.fillRect(intL + m.rx, intT + m.ry, 1, 1);
+        }
+
+        // === VOIDHEART ORE EXPOSURE — large craters only, game-loop animated ===
+        if (f.isLarge) {
+          // Pulse between #6a0040 and #aa0060 over a 1.5-second cycle
+          const pulse     = (Math.sin(t * (Math.PI * 2 / 1.5)) + 1) / 2;
+          const voidColor = pulse > 0.5 ? '#aa0060' : '#6a0040';
+          // Faint 1-px glow border around the cluster footprint
+          ctx.fillStyle = '#2a0018';
+          ctx.fillRect(cx - 5, cy - 3, 10, 6);
+          // Gold vein pixels adjacent to ore cluster
+          ctx.fillStyle = '#c8901a';
+          for (const g of f.goldVeins) {
+            ctx.fillRect(cx + g.dx, cy + g.dy, 1, 1);
+          }
+          // Voidheart ore cluster (pulsing color)
+          ctx.fillStyle = voidColor;
+          for (const v of f.voidCluster) {
+            ctx.fillRect(cx + v.dx, cy + v.dy, 1, 1);
+          }
+        }
       },
     });
   });
