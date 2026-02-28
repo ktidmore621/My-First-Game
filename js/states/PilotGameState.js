@@ -1806,6 +1806,465 @@ function _buildGroundFeatures(seed = 0, getHeightAt = () => 0) {
     });
   });
 
+  // ================================================================
+  // EXCAVATION PITS
+  // ================================================================
+  // 4 rectangular mining pits cut into the alien ground.
+  // Each: 52×20 px. Reinforced dark-metal beam supports on each side,
+  // exposed bedrock floor, floor debris (rocks + ore fragments),
+  // broken orc support cable with frayed end, geological strata lines
+  // on the pit walls, and warning stripes matching OrcSilo hazard markings.
+  [
+    [160, 0.10], [360, 0.38], [560, 0.15], [800, 0.48],
+  ].forEach(([bx, by]) => {
+    const fx = Math.max(30,   Math.min(920,  Math.round(bx + srf() * 80 - 40)));
+    const fy = Math.max(0.05, Math.min(0.60, by + srf() * 0.12 - 0.06));
+
+    // Local RNG keyed to this pit — does NOT consume shared sr() slots.
+    let _ei = 0;
+    const er = () => {
+      const v = ((Math.sin(fx * 11.3 + fy * 59.7 + _ei++) * 9301 + 49297) % 233280) / 233280;
+      return Math.max(0, Math.min(1, (v - 0.1715) / (0.2512 - 0.1715)));
+    };
+
+    const PIT_W  = 52;
+    const PIT_D  = 20; // depth in pixels
+    const BEAM_W = 4;  // metal support beam width each side
+
+    // Floor debris: 3-4 rock pixels + 1-2 purplish-red ore fragments.
+    // isOre flag set for the first 1-2 entries.
+    const numDebris = 3 + Math.floor(er() * 2);
+    const pitDebris = [];
+    for (let i = 0; i < numDebris; i++) {
+      const innerW = PIT_W - BEAM_W * 2 - 4;
+      pitDebris.push({
+        rx:    BEAM_W + 2 + Math.floor(er() * Math.max(1, innerW)),
+        isOre: i < (1 + Math.floor(er() * 2)),
+      });
+    }
+
+    // Broken support cable: diagonal 1px line across pit interior.
+    const cabX1 = BEAM_W + 2 + Math.floor(er() * 8);
+    const cabY1 = 2      + Math.floor(er() * 4);
+    const cabX2 = BEAM_W + 10 + Math.floor(er() * 12);
+    const cabY2 = PIT_D  - 6;
+
+    features.push({
+      x: fx, y: fy,
+      PIT_W, PIT_D, BEAM_W, pitDebris, cabX1, cabY1, cabX2, cabY2,
+
+      draw(ctx, px, py, f) {
+        const lx = Math.floor(px - f.PIT_W / 2);
+        const ty = Math.floor(py); // terrain surface = top rim of pit
+
+        // === PIT WALL STRATA — 1px horizontal bands, 3 geological tones ===
+        const strataTones = ['#1a0c06', '#160a04', '#1e1006'];
+        for (let d = 0; d < f.PIT_D; d++) {
+          ctx.fillStyle = strataTones[d % 3];
+          ctx.fillRect(lx + f.BEAM_W, ty + d, f.PIT_W - f.BEAM_W * 2, 1);
+        }
+
+        // === PIT FLOOR — exposed bedrock, alternating 1px rows ===
+        for (let row = 0; row < 4; row++) {
+          ctx.fillStyle = row % 2 === 0 ? '#0d0804' : '#0a0602';
+          ctx.fillRect(lx + f.BEAM_W, ty + f.PIT_D - 4 + row, f.PIT_W - f.BEAM_W * 2, 1);
+        }
+
+        // === FLOOR DEBRIS — rock pixels and purplish-red ore fragments ===
+        for (const d of f.pitDebris) {
+          ctx.fillStyle = d.isOre ? '#3a0828' : '#3a2a1a';
+          ctx.fillRect(lx + d.rx, ty + f.PIT_D - 3, 2, 1);
+        }
+
+        // === BROKEN ORC SUPPORT CABLE — diagonal 1px line + frayed end ===
+        ctx.fillStyle = '#2a2a2a';
+        const cdx    = f.cabX2 - f.cabX1;
+        const cdy    = f.cabY2 - f.cabY1;
+        const cSteps = Math.max(Math.abs(cdx), Math.abs(cdy));
+        for (let s = 0; s <= cSteps; s++) {
+          ctx.fillRect(
+            lx + Math.round(f.cabX1 + (s / cSteps) * cdx),
+            ty + Math.round(f.cabY1 + (s / cSteps) * cdy),
+            1, 1
+          );
+        }
+        // Frayed end: 3 diverging 1px pixels at cable terminus
+        ctx.fillRect(lx + f.cabX2 + 1, ty + f.cabY2 - 1, 1, 1);
+        ctx.fillRect(lx + f.cabX2 + 2, ty + f.cabY2,     1, 1);
+        ctx.fillRect(lx + f.cabX2 + 1, ty + f.cabY2 + 1, 1, 1);
+
+        // === REINFORCED METAL BEAM SUPPORTS — left and right sides ===
+        // Left beam
+        ctx.fillStyle = '#1a1810'; // dark salvage metal body
+        ctx.fillRect(lx, ty, f.BEAM_W, f.PIT_D);
+        ctx.fillStyle = '#2e2c22'; // 1px highlight on outer (left) edge
+        ctx.fillRect(lx, ty, 1, f.PIT_D);
+        ctx.fillStyle = '#0c0a08'; // 1px shadow on inner (right) edge
+        ctx.fillRect(lx + f.BEAM_W - 1, ty, 1, f.PIT_D);
+        // Right beam
+        ctx.fillStyle = '#1a1810';
+        ctx.fillRect(lx + f.PIT_W - f.BEAM_W, ty, f.BEAM_W, f.PIT_D);
+        ctx.fillStyle = '#2e2c22';
+        ctx.fillRect(lx + f.PIT_W - f.BEAM_W, ty, 1, f.PIT_D);
+        ctx.fillStyle = '#0c0a08';
+        ctx.fillRect(lx + f.PIT_W - 1, ty, 1, f.PIT_D);
+
+        // === WARNING MARKINGS on rim — alternating 2px dark-yellow and black ===
+        // Matches OrcSilo hazard stripe palette (#886600 / #181410).
+        for (let i = 0; i < f.PIT_W; i += 4) {
+          ctx.fillStyle = '#886600';
+          ctx.fillRect(lx + i,     ty - 2, 2, 2);
+          ctx.fillStyle = '#181410';
+          ctx.fillRect(lx + i + 2, ty - 2, 2, 2);
+        }
+      },
+    });
+  });
+
+  // ================================================================
+  // ABANDONED MINING RIGS
+  // ================================================================
+  // 3 derelict orc excavation machines left to rust.
+  // Each: ~36×28 px. Squat junk-metal frame (dark salvage #1e1c14),
+  // panel seams, OrcCannon-standard rivets, collapsed buckled panel,
+  // L-shaped broken boom arm, animated spinning gear (game-loop driven),
+  // Voidheart ore residue contamination, and orc scratch-mark glyph.
+  [
+    [240, 0.08], [490, 0.28], [730, 0.48],
+  ].forEach(([bx, by]) => {
+    const fx = Math.max(40,   Math.min(900,  Math.round(bx + srf() * 80 - 40)));
+    const fy = Math.max(0.03, Math.min(0.60, by + srf() * 0.12 - 0.06));
+
+    // Local RNG for per-rig variation — does NOT consume shared sr() slots.
+    let _mi = 0;
+    const mr = () => {
+      const v = ((Math.sin(fx * 17.1 + fy * 43.9 + _mi++) * 9301 + 49297) % 233280) / 233280;
+      return Math.max(0, Math.min(1, (v - 0.1715) / (0.2512 - 0.1715)));
+    };
+
+    const RIG_W = 36;
+    const RIG_H = 28;
+    // Which side holds the collapsed panel (alternates per rig)
+    const collapseLeft = mr() > 0.5;
+    // Gear position: on the non-collapsed side, near the top
+    const gearOffX = collapseLeft ? RIG_W - 10 : 4;
+    const gearOffY = -(RIG_H - 4); // y offset from base (near top of rig)
+
+    features.push({
+      x: fx, y: fy,
+      RIG_W, RIG_H, collapseLeft, gearOffX, gearOffY,
+
+      draw(ctx, px, py, f, t) {
+        const lx  = Math.floor(px - f.RIG_W / 2);
+        const bay = Math.floor(py); // base Y — terrain surface = bottom of rig
+
+        // === MAIN BODY FRAME — dark salvage metal ===
+        ctx.fillStyle = '#1e1c14';
+        ctx.fillRect(lx, bay - f.RIG_H, f.RIG_W, f.RIG_H);
+        // Top surface highlight
+        ctx.fillStyle = '#32302a';
+        ctx.fillRect(lx, bay - f.RIG_H, f.RIG_W, 1);
+        // Base shadow row
+        ctx.fillStyle = '#0a0a06';
+        ctx.fillRect(lx, bay - 1, f.RIG_W, 1);
+        // Right edge shadow
+        ctx.fillStyle = '#0e0c08';
+        ctx.fillRect(lx + f.RIG_W - 1, bay - f.RIG_H, 1, f.RIG_H);
+
+        // === PANEL SEAMS — 1px divider lines creating structural sections ===
+        ctx.fillStyle = '#0e0c08';
+        ctx.fillRect(lx + 12, bay - f.RIG_H, 1, f.RIG_H); // left vertical seam
+        ctx.fillRect(lx + 24, bay - f.RIG_H, 1, f.RIG_H); // right vertical seam
+        ctx.fillRect(lx,      bay - 14,       f.RIG_W, 1); // horizontal mid seam
+        ctx.fillRect(lx,      bay - 8,        f.RIG_W, 1); // horizontal lower seam
+
+        // === RIVETS — 1×1 px bright highlight at panel junctions + 1px shadow below ===
+        [[11, -15], [11, -7], [23, -15], [23, -7],
+         [11, -(f.RIG_H - 1)], [23, -(f.RIG_H - 1)]].forEach(([rx, ry]) => {
+          ctx.fillStyle = '#5a5848'; // rivet highlight
+          ctx.fillRect(lx + rx, bay + ry,     1, 1);
+          ctx.fillStyle = '#0a0806'; // rivet shadow beneath
+          ctx.fillRect(lx + rx, bay + ry + 1, 1, 1);
+        });
+
+        // === COLLAPSED SECTION — panel offset 3px upward suggesting buckled metal ===
+        const colX = f.collapseLeft ? lx : lx + f.RIG_W - 10;
+        ctx.fillStyle = '#2a2820'; // buckled face catching more light
+        ctx.fillRect(colX, bay - f.RIG_H - 3, 10, Math.floor(f.RIG_H / 2));
+        ctx.fillStyle = '#0e0c08'; // seam lines bounding the collapsed panel
+        ctx.fillRect(colX,     bay - f.RIG_H - 3, 1, Math.floor(f.RIG_H / 2));
+        ctx.fillRect(colX + 9, bay - f.RIG_H - 3, 1, Math.floor(f.RIG_H / 2));
+
+        // === MECHANICAL ARM / BOOM — L-shaped, partially broken ===
+        const armBaseX = f.collapseLeft ? lx + f.RIG_W - 5 : lx + 2;
+        const armTopY  = bay - f.RIG_H - 9;
+        const armDir   = f.collapseLeft ? 1 : -1; // direction horizontal arm extends
+        // Vertical section
+        ctx.fillStyle = '#2a2820';
+        ctx.fillRect(armBaseX, armTopY, 3, 12);
+        ctx.fillStyle = '#3e3c30'; // left highlight edge
+        ctx.fillRect(armBaseX, armTopY, 1, 12);
+        // Horizontal arm extending from top of vertical section
+        const hArmX = armBaseX + (armDir > 0 ? 3 : -9);
+        ctx.fillStyle = '#2a2820';
+        ctx.fillRect(hArmX, armTopY, 9, 3);
+        ctx.fillStyle = '#3e3c30'; // top highlight edge
+        ctx.fillRect(hArmX, armTopY, 9, 1);
+        // Broken dangling end (2×5 px stub dropping from arm tip)
+        const hangX = armBaseX + (armDir > 0 ? 11 : -10);
+        ctx.fillStyle = '#1e1c14';
+        ctx.fillRect(hangX, armTopY + 3, 2, 5);
+
+        // === SPINNING GEAR — 6×6 px square, animated via game loop ===
+        // Alternates between top/bottom and left/right notch pairs 3× per second.
+        // t is this._elapsedTime fed through _drawGroundTile — game-loop driven.
+        const gx       = lx + f.gearOffX;
+        const gy       = bay + f.gearOffY;
+        const gearFlip = Math.floor(t * 3) % 2; // 0 or 1
+        // Gear body
+        ctx.fillStyle = '#3a382c';
+        ctx.fillRect(gx, gy, 6, 6);
+        // Center cross-slot
+        ctx.fillStyle = '#2a2820';
+        ctx.fillRect(gx + 2, gy + 2, 2, 2);
+        // Top-left highlight pixel
+        ctx.fillStyle = '#4e4c40';
+        ctx.fillRect(gx + 1, gy + 1, 1, 1);
+        // Animated 1px notch pixels on alternating edges
+        ctx.fillStyle = '#0e0c08';
+        if (gearFlip === 0) {
+          ctx.fillRect(gx + 2, gy,     2, 1); // top notch
+          ctx.fillRect(gx + 2, gy + 5, 2, 1); // bottom notch
+        } else {
+          ctx.fillRect(gx,     gy + 2, 1, 2); // left notch
+          ctx.fillRect(gx + 5, gy + 2, 1, 2); // right notch
+        }
+
+        // === VOIDHEART ORE RESIDUE — contamination on ore collection mechanism ===
+        ctx.fillStyle = '#1a0018'; // outer contamination halo
+        ctx.fillRect(lx + 14, bay - 7, 8, 5);
+        ctx.fillStyle = '#2a0028'; // brighter inner core
+        ctx.fillRect(lx + 16, bay - 6, 4, 3);
+        // Pulsing ore pixel (1.8-second cycle)
+        const oreP = (Math.sin(t * Math.PI * 2 / 1.8) + 1) / 2;
+        ctx.fillStyle = oreP > 0.6 ? '#6a0040' : '#3a0020';
+        ctx.fillRect(lx + 17, bay - 5, 2, 1);
+
+        // === ORC GLYPH — scratch marks on panel (matches OrcCannon #6a5840 style) ===
+        const glyX = f.collapseLeft ? lx + 26 : lx + 3;
+        ctx.fillStyle = '#6a5840'; // worn scratch tone
+        ctx.fillRect(glyX,     bay - 20, 1, 5); // vertical stroke
+        ctx.fillRect(glyX - 1, bay - 20, 3, 1); // top horizontal tick
+        ctx.fillRect(glyX - 1, bay - 17, 2, 1); // mid tick
+      },
+    });
+  });
+
+  // ================================================================
+  // SCATTERED EQUIPMENT PIECES
+  // ================================================================
+  // 8 small props scattered across the mining zone:
+  // 2 broken pipes, 2 ore containers, 2 orc helmets,
+  // 1 broken surveying instrument, 1 discarded orc gauntlet.
+
+  // ---- 2 broken pipes ----
+  // Straight (18px) and L-shaped (14px + 10px drop). 2px thick,
+  // 1px top highlight, 1px bottom shadow — dark salvage metal.
+  [[115, 0.25, 'h'], [680, 0.44, 'L']].forEach(([bx, by, shape]) => {
+    const fx = Math.max(20, Math.min(940, Math.round(bx + srf() * 100 - 50)));
+    const fy = Math.max(0.08, Math.min(0.65, by + srf() * 0.14 - 0.07));
+
+    features.push({
+      x: fx, y: fy, shape,
+
+      draw(ctx, px, py, f) {
+        const ox = Math.floor(px);
+        const oy = Math.floor(py);
+        if (f.shape === 'h') {
+          // Straight horizontal pipe, 18px long
+          ctx.fillStyle = '#2a2820';
+          ctx.fillRect(ox - 9, oy - 1, 18, 2);
+          ctx.fillStyle = '#3e3c30'; // 1px top highlight
+          ctx.fillRect(ox - 9, oy - 1, 18, 1);
+          ctx.fillStyle = '#0e0c08'; // 1px bottom shadow
+          ctx.fillRect(ox - 9, oy,     18, 1);
+          ctx.fillStyle = '#0a0806'; // open end cap
+          ctx.fillRect(ox + 8, oy - 1, 1,  2);
+        } else {
+          // L-shaped pipe: 14px horizontal + 10px vertical drop
+          ctx.fillStyle = '#2a2820';
+          ctx.fillRect(ox - 7, oy - 1, 14, 2); // horizontal arm
+          ctx.fillStyle = '#3e3c30';
+          ctx.fillRect(ox - 7, oy - 1, 14, 1);
+          ctx.fillStyle = '#0e0c08';
+          ctx.fillRect(ox - 7, oy,     14, 1);
+          // Vertical arm drops from right end of horizontal
+          ctx.fillStyle = '#2a2820';
+          ctx.fillRect(ox + 5, oy - 1, 2, 10);
+          ctx.fillStyle = '#3e3c30'; // left highlight
+          ctx.fillRect(ox + 5, oy - 1, 1, 10);
+          ctx.fillStyle = '#0e0c08'; // right shadow
+          ctx.fillRect(ox + 6, oy - 1, 1, 10);
+        }
+      },
+    });
+  });
+
+  // ---- 2 ore containers ----
+  // 8×10px open-topped bins. Panel seam, edge highlights, and a
+  // 2×2 px Voidheart ore cluster inside the open top with pulsing glow.
+  [[290, 0.30], [745, 0.18]].forEach(([bx, by]) => {
+    const fx = Math.max(20, Math.min(940, Math.round(bx + srf() * 100 - 50)));
+    const fy = Math.max(0.08, Math.min(0.65, by + srf() * 0.14 - 0.07));
+
+    features.push({
+      x: fx, y: fy,
+
+      draw(ctx, px, py, f, t) {
+        const ox = Math.floor(px);
+        const oy = Math.floor(py);
+        // Bin body
+        ctx.fillStyle = '#2a2418';
+        ctx.fillRect(ox - 4, oy - 10, 8, 10);
+        ctx.fillStyle = '#3a3228'; // left highlight edge
+        ctx.fillRect(ox - 4, oy - 10, 1, 10);
+        ctx.fillStyle = '#0e0c08'; // right shadow edge
+        ctx.fillRect(ox + 3,  oy - 10, 1, 10);
+        ctx.fillStyle = '#0e0c08'; // base
+        ctx.fillRect(ox - 4, oy - 1, 8, 1);
+        // Panel seam mid-height
+        ctx.fillStyle = '#1a1810';
+        ctx.fillRect(ox - 4, oy - 5, 8, 1);
+        // Open top rim
+        ctx.fillStyle = '#3a3228';
+        ctx.fillRect(ox - 4, oy - 10, 8, 1);
+        // Voidheart ore residue: 2×2 purplish cluster inside open top
+        const oreP = (Math.sin(t * Math.PI * 2 / 2.2) + 1) / 2;
+        ctx.fillStyle = oreP > 0.6 ? '#8a0050' : '#4a0030';
+        ctx.fillRect(ox - 1, oy - 9, 2, 2);
+        // Faint contamination glow border around ore
+        ctx.fillStyle = '#1a0018';
+        ctx.fillRect(ox - 2, oy - 10, 4, 1);
+      },
+    });
+  });
+
+  // ---- 2 discarded orc helmets ----
+  // 10×8 px dome (lying on side). Orc green-grey armour with brass rim,
+  // rank plume stub (3×2 px green tuft), and cracked visor (1px dark line).
+  [[430, 0.22], [855, 0.40]].forEach(([bx, by]) => {
+    const fx = Math.max(20, Math.min(940, Math.round(bx + srf() * 100 - 50)));
+    const fy = Math.max(0.08, Math.min(0.65, by + srf() * 0.14 - 0.07));
+
+    features.push({
+      x: fx, y: fy,
+
+      draw(ctx, px, py) {
+        const ox = Math.floor(px);
+        const oy = Math.floor(py);
+        // Helmet dome
+        ctx.fillStyle = '#2a3818'; // orc green-grey armour
+        ctx.fillRect(ox - 5, oy - 8, 10, 7);
+        ctx.fillStyle = '#3a4a24'; // top highlight
+        ctx.fillRect(ox - 5, oy - 8, 10, 1);
+        ctx.fillStyle = '#344422'; // left edge highlight
+        ctx.fillRect(ox - 5, oy - 8, 1, 7);
+        ctx.fillStyle = '#1a2410'; // depth shadow
+        ctx.fillRect(ox - 5, oy - 2, 10, 1);
+        // Brass rim at base
+        ctx.fillStyle = '#6a5020';
+        ctx.fillRect(ox - 5, oy - 1, 10, 1);
+        // Rank plume stub: 3×2 px green tuft on top
+        ctx.fillStyle = '#3a6020';
+        ctx.fillRect(ox - 1, oy - 10, 3, 2);
+        ctx.fillStyle = '#2a4a14'; // plume base shadow
+        ctx.fillRect(ox,     oy - 9,  1, 1);
+        // Cracked visor: 1px dark horizontal line across visor band
+        ctx.fillStyle = '#0e1a08';
+        ctx.fillRect(ox - 3, oy - 5, 7, 1);
+        // Visor highlight above crack
+        ctx.fillStyle = '#4a5830';
+        ctx.fillRect(ox - 3, oy - 6, 7, 1);
+      },
+    });
+  });
+
+  // ---- 1 broken surveying instrument ----
+  // Thin tripod: 3 diverging 1px legs from a central 2×2 px head.
+  [[540, 0.35]].forEach(([bx, by]) => {
+    const fx = Math.max(20, Math.min(940, Math.round(bx + srf() * 100 - 50)));
+    const fy = Math.max(0.08, Math.min(0.65, by + srf() * 0.14 - 0.07));
+
+    features.push({
+      x: fx, y: fy,
+
+      draw(ctx, px, py) {
+        const ox = Math.floor(px);
+        const oy = Math.floor(py);
+        // Head: 2×2 px central piece
+        ctx.fillStyle = '#4a4838';
+        ctx.fillRect(ox - 1, oy - 6, 2, 2);
+        // 1px dark border around head
+        ctx.fillStyle = '#1a1810';
+        ctx.fillRect(ox - 2, oy - 7, 4, 1); // top
+        ctx.fillRect(ox - 2, oy - 4, 4, 1); // bottom
+        ctx.fillRect(ox - 2, oy - 7, 1, 4); // left
+        ctx.fillRect(ox + 1, oy - 7, 1, 4); // right
+        // 3 tripod legs diverging as 1px diagonal lines from head base
+        ctx.fillStyle = '#2a2820';
+        for (let i = 0; i < 7; i++) {
+          ctx.fillRect(ox - 1 - i, oy - 4 + i, 1, 1); // left leg
+          ctx.fillRect(ox,          oy - 4 + i, 1, 1); // center leg (straight down)
+          ctx.fillRect(ox + 1 + i, oy - 4 + i, 1, 1); // right leg
+        }
+      },
+    });
+  });
+
+  // ---- 1 discarded orc gauntlet ----
+  // 8×9 px armoured glove. Brass base with green knuckle plate,
+  // fingers suggested by 3 horizontal 1px division lines, brass
+  // knuckle highlight pixels.
+  [[670, 0.52]].forEach(([bx, by]) => {
+    const fx = Math.max(20, Math.min(940, Math.round(bx + srf() * 100 - 50)));
+    const fy = Math.max(0.08, Math.min(0.65, by + srf() * 0.14 - 0.07));
+
+    features.push({
+      x: fx, y: fy,
+
+      draw(ctx, px, py) {
+        const ox = Math.floor(px);
+        const oy = Math.floor(py);
+        // Main glove body in brass
+        ctx.fillStyle = '#3a3010';
+        ctx.fillRect(ox - 4, oy - 10, 8, 9);
+        ctx.fillStyle = '#5a4c20'; // top highlight
+        ctx.fillRect(ox - 4, oy - 10, 8, 1);
+        ctx.fillStyle = '#4a3e1a'; // left edge highlight
+        ctx.fillRect(ox - 4, oy - 10, 1, 9);
+        ctx.fillStyle = '#1a1608'; // right shadow
+        ctx.fillRect(ox + 3, oy - 10, 1, 9);
+        ctx.fillStyle = '#0e0c06'; // base rim
+        ctx.fillRect(ox - 4, oy - 1, 8, 1);
+        // Green armoured knuckle plate
+        ctx.fillStyle = '#2a3818';
+        ctx.fillRect(ox - 3, oy - 9, 6, 3);
+        ctx.fillStyle = '#1e2a10'; // plate top edge
+        ctx.fillRect(ox - 3, oy - 9, 6, 1);
+        // Fingers suggested by 3 horizontal 1px division lines
+        ctx.fillStyle = '#1a1a0e';
+        ctx.fillRect(ox - 3, oy - 7, 6, 1); // finger division 1
+        ctx.fillRect(ox - 3, oy - 5, 6, 1); // finger division 2
+        ctx.fillRect(ox - 3, oy - 3, 6, 1); // finger division 3
+        // Brass knuckle highlight pixels
+        ctx.fillStyle = '#6a5820';
+        ctx.fillRect(ox - 3, oy - 8, 1, 1);
+        ctx.fillRect(ox - 1, oy - 8, 1, 1);
+        ctx.fillRect(ox + 1, oy - 8, 1, 1);
+      },
+    });
+  });
+
   return features;
 }
 
