@@ -189,15 +189,8 @@ class PilotGameScene extends Phaser.Scene {
     this._trauma       = 0;    // camera shake trauma value (0–1)
     this._fireCooldown = 0;    // seconds until next shot is allowed
 
-    // DEBUG PANEL — remove before release
-    this._lastDebugEvent = '';
-    this._lastBolt = null;
-    this._debugText = this.add.text(10, 10, 'DEBUG', {
-      fontSize: '14px',
-      fill: '#ffff00',
-      backgroundColor: '#000000',
-      padding: { x: 6, y: 6 }
-    }).setScrollFactor(0).setDepth(999);
+    // ---- Collision diagnostic — runs once, 3s after scene start ----
+    this.time.delayedCall(3000, this._runCollisionDiagnostic, [], this);
   }
 
   // ==========================================================
@@ -268,21 +261,6 @@ class PilotGameScene extends Phaser.Scene {
       this._triggerGameOver('victory');
     }
 
-    // DEBUG PANEL — remove before release
-    if (this._debugText) {
-      const cg = this._enemyManager.getCannons();
-      const sg = this._enemyManager.getSilos();
-      const cgCount = cg && cg.getLength ? cg.getLength() : (cg ? cg.length : 'null');
-      const sgCount = sg && sg.getLength ? sg.getLength() : (sg ? sg.length : 'null');
-      const boltCount = this._playerBolts && this._playerBolts.countActive ? this._playerBolts.countActive(true) : 'no group';
-      this._debugText.setText([
-        'CG:' + cgCount,
-        'SG:' + sgCount,
-        'Bolts:' + boltCount,
-        'Event:' + (this._lastDebugEvent || 'none'),
-      ].join('\n'));
-    }
-
     this._input.clearTaps();
   }
 
@@ -316,10 +294,6 @@ class PilotGameScene extends Phaser.Scene {
     const noseY   = this._ship.y + Math.sin(shipRad) * 32;
 
     bolt.fire(noseX, noseY, bvx, bvy, BOLT_DAMAGE, this._planeConf.color, angle);
-
-    // DEBUG PANEL — remove before release
-    this._lastDebugEvent = 'bolt fired';
-    this._lastBolt = bolt;
 
     // ---- Muzzle flash — particle burst at the bolt spawn point ----
     if (this._muzzleEmitter) {
@@ -394,8 +368,7 @@ class PilotGameScene extends Phaser.Scene {
 
   // Pair 1 — player bolt hits OrcCannon structure
   _onBoltHitCannon(bolt, cannon) {
-    console.log('HIT CANNON');
-    this._lastDebugEvent = 'HIT CANNON'; // DEBUG PANEL — remove before release
+    window._ipcfHitCount = (window._ipcfHitCount || 0) + 1;
     if (!cannon.health || !cannon.health.isAlive()) return;
 
     bolt.kill();
@@ -425,8 +398,7 @@ class PilotGameScene extends Phaser.Scene {
 
   // Pair 2 — player bolt hits OrcSilo structure
   _onBoltHitSilo(bolt, silo) {
-    console.log('HIT SILO');
-    this._lastDebugEvent = 'HIT SILO'; // DEBUG PANEL — remove before release
+    window._ipcfHitCount = (window._ipcfHitCount || 0) + 1;
     if (!silo.health || !silo.health.isAlive()) return;
 
     bolt.kill();
@@ -514,6 +486,90 @@ class PilotGameScene extends Phaser.Scene {
     if (interceptPos) {
       this._lighting.addExplosionLight(interceptPos.x, interceptPos.y);
     }
+  }
+
+  // ==========================================================
+  // COLLISION DIAGNOSTIC — runs once, 3s after scene start
+  // Stores full report in window._ipcfDiagnostic for external reading
+  // ==========================================================
+
+  _runCollisionDiagnostic() {
+    const report = [];
+
+    // 1. playerBolts group
+    const pb = this.playerBolts;
+    const pbExists = !!pb;
+    const pbPhysics = pbExists ? (pb.physicsType !== undefined) : false;
+    report.push('playerBolts exists: ' + pbExists + ', has physicsType: ' + pbPhysics +
+      (pbPhysics ? ' (' + pb.physicsType + ')' : ''));
+
+    // 2. cannonGroup
+    const cg = this._enemyManager.getCannons();
+    const cgHasGetLen = !!(cg && typeof cg.getLength === 'function');
+    report.push('cannonGroup is static group: ' + cgHasGetLen);
+    if (cgHasGetLen) report.push('cannonGroup count: ' + cg.getLength());
+
+    // 3. siloGroup
+    const sg = this._enemyManager.getSilos();
+    const sgHasGetLen = !!(sg && typeof sg.getLength === 'function');
+    report.push('siloGroup is static group: ' + sgHasGetLen);
+    if (sgHasGetLen) report.push('siloGroup count: ' + sg.getLength());
+
+    // 4. First cannon body details
+    if (cgHasGetLen && cg.getLength() > 0) {
+      const c0 = cg.getChildren()[0];
+      const b  = c0 ? c0.body : null;
+      if (b) {
+        report.push('cannon[0] body: enabled=' + b.enable +
+          ' x=' + Math.round(b.x) + ' y=' + Math.round(b.y) +
+          ' w=' + Math.round(b.width) + ' h=' + Math.round(b.height));
+      } else {
+        report.push('cannon[0] body: null');
+      }
+    } else {
+      report.push('cannon[0] body: no cannons in group');
+    }
+
+    // 5. First silo body details
+    if (sgHasGetLen && sg.getLength() > 0) {
+      const s0 = sg.getChildren()[0];
+      const b  = s0 ? s0.body : null;
+      if (b) {
+        report.push('silo[0] body: enabled=' + b.enable +
+          ' x=' + Math.round(b.x) + ' y=' + Math.round(b.y) +
+          ' w=' + Math.round(b.width) + ' h=' + Math.round(b.height));
+      } else {
+        report.push('silo[0] body: null');
+      }
+    } else {
+      report.push('silo[0] body: no silos in group');
+    }
+
+    // 6. Physics collider count
+    const colliders = this.physics.world.colliders;
+    if (colliders) {
+      const count = colliders.getActive ? colliders.getActive().length : 'unknown';
+      report.push('physics colliders registered: ' + count);
+    } else {
+      report.push('physics colliders: world.colliders is null');
+    }
+
+    // 7. Extra: first player bolt body check (if any active)
+    const activeBolts = pb ? pb.getChildren().filter(b => b.active) : [];
+    if (activeBolts.length > 0) {
+      const ab = activeBolts[0];
+      const bb = ab.body;
+      report.push('activeBolt[0] body: enabled=' + (bb ? bb.enable : 'N/A') +
+        ' x=' + Math.round(ab.x) + ' y=' + Math.round(ab.y) +
+        (bb ? ' w=' + Math.round(bb.width) + ' h=' + Math.round(bb.height) : ''));
+    } else {
+      report.push('activeBolt[0]: none active at diagnostic time');
+    }
+
+    // Store for external reading
+    const text = report.join('\n');
+    window._ipcfDiagnostic = text;
+    console.log('[IPCF DIAGNOSTIC]\n' + text);
   }
 
   // ==========================================================
