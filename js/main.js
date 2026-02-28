@@ -16,7 +16,7 @@
    ============================================================ */
 
 const config = {
-  type: Phaser.AUTO,
+  type: Phaser.CANVAS, // Canvas renderer required — all entities use raw Canvas 2D API
 
   width:  960,
   height: 540,
