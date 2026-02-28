@@ -188,6 +188,17 @@ class PilotGameScene extends Phaser.Scene {
     this._gameOver     = false;
     this._trauma       = 0;    // camera shake trauma value (0–1)
     this._fireCooldown = 0;    // seconds until next shot is allowed
+
+    // DEBUG PANEL — remove before release
+    this._lastDebugEvent = '';
+    this._lastBolt = null;
+    this._debugText = this.add.text(10, 10, '', {
+      fontFamily: 'monospace',
+      fontSize:   '11px',
+      color:      '#ffffff',
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      padding:    { x: 4, y: 4 },
+    }).setScrollFactor(0).setDepth(200);
   }
 
   // ==========================================================
@@ -258,6 +269,27 @@ class PilotGameScene extends Phaser.Scene {
       this._triggerGameOver('victory');
     }
 
+    // DEBUG PANEL — remove before release
+    if (this._debugText) {
+      const cannons = this._enemyManager.getCannons();
+      const silos   = this._enemyManager.getSilos();
+      const cannonCount = typeof cannons.getLength === 'function'
+        ? cannons.getLength() : cannons.length;
+      const siloCount = typeof silos.getLength === 'function'
+        ? silos.getLength() : silos.length;
+      const boltsActive = this.playerBolts.countActive(true);
+      const boltBody = this._lastBolt && this._lastBolt.body
+        ? `a=${this._lastBolt.body.active} e=${this._lastBolt.body.enable}`
+        : 'none';
+      this._debugText.setText(
+        `CannonGrp: ${cannonCount}\n` +
+        `SiloGrp: ${siloCount}\n` +
+        `Bolts active: ${boltsActive}\n` +
+        `Last event: ${this._lastDebugEvent}\n` +
+        `Bolt body: ${boltBody}`
+      );
+    }
+
     this._input.clearTaps();
   }
 
@@ -291,6 +323,10 @@ class PilotGameScene extends Phaser.Scene {
     const noseY   = this._ship.y + Math.sin(shipRad) * 32;
 
     bolt.fire(noseX, noseY, bvx, bvy, BOLT_DAMAGE, this._planeConf.color, angle);
+
+    // DEBUG PANEL — remove before release
+    this._lastDebugEvent = 'bolt fired';
+    this._lastBolt = bolt;
 
     // ---- Muzzle flash — particle burst at the bolt spawn point ----
     if (this._muzzleEmitter) {
@@ -366,6 +402,7 @@ class PilotGameScene extends Phaser.Scene {
   // Pair 1 — player bolt hits OrcCannon structure
   _onBoltHitCannon(bolt, cannon) {
     console.log('HIT CANNON');
+    this._lastDebugEvent = 'HIT CANNON'; // DEBUG PANEL — remove before release
     if (!cannon.health || !cannon.health.isAlive()) return;
 
     bolt.kill();
@@ -396,6 +433,7 @@ class PilotGameScene extends Phaser.Scene {
   // Pair 2 — player bolt hits OrcSilo structure
   _onBoltHitSilo(bolt, silo) {
     console.log('HIT SILO');
+    this._lastDebugEvent = 'HIT SILO'; // DEBUG PANEL — remove before release
     if (!silo.health || !silo.health.isAlive()) return;
 
     bolt.kill();
