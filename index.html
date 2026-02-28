@@ -39,12 +39,13 @@
     they must load after the Phaser CDN script above.
   -->
   <script src="js/entities/HealthSystem.js"></script>
+  <script src="js/entities/Projectile.js"></script>
   <script src="js/entities/PlayerShip.js"></script>
   <script src="js/entities/OrcCannon.js"></script>
   <script src="js/entities/OrcSilo.js"></script>
 
   <!--
-    Systems — EnemyManager depends on OrcCannon and OrcSilo,
+    Systems — EnemyManager depends on OrcCannon, OrcSilo, and Projectile,
     so it loads after those entities and before the scenes.
   -->
   <script src="js/systems/EnemyManager.js"></script>

@@ -25,12 +25,18 @@
 
 class EnemyManager {
 
-  // scene   : active Phaser.Scene (PilotGameScene)
-  // groundY : screen-space Y of the ground surface (Math.floor(H * 0.72))
-  constructor(scene, groundY) {
-    this._scene   = scene;
-    this._groundY = groundY;
-    this._enemies = []; // mixed OrcCannon | OrcSilo array
+  // scene        : active Phaser.Scene (PilotGameScene)
+  // groundY      : screen-space Y of the ground surface (Math.floor(H * 0.72))
+  // enemyBolts   : Phaser.GameObjects.Group (classType: Projectile) — OrcCannons
+  //               fire orc plasma orbs into this shared pool
+  // missiles     : Phaser.GameObjects.Group (classType: Projectile) — OrcSilos
+  //               activate invisible physics proxies from this pool for overlap
+  constructor(scene, groundY, enemyBolts = null, missiles = null) {
+    this._scene      = scene;
+    this._groundY    = groundY;
+    this._enemies    = []; // mixed OrcCannon | OrcSilo array
+    this._enemyBolts = enemyBolts;
+    this._missiles   = missiles;
 
     // Create the shared 3×3 white pixel texture used by Phaser particle
     // emitters in OrcSilo (missile trail + impact bursts).
@@ -78,15 +84,19 @@ class EnemyManager {
     const H = this._groundY; // shorthand
 
     // ---- OrcCannon positions ----
+    // Pass the shared enemyBolts group so each cannon fires Projectile orbs
+    // into the Phaser physics pool (enabling arcade overlap in PilotGameScene).
     const cannonXs = [600, 1100, 1500, 1950, 2350, 2700, 3300, 3650, 4300, 4550];
     cannonXs.forEach(worldX => {
-      this._enemies.push(new OrcCannon(this._scene, worldX, H));
+      this._enemies.push(new OrcCannon(this._scene, worldX, H, this._enemyBolts));
     });
 
     // ---- OrcSilo positions ----
+    // Pass the shared missiles group so each silo activates invisible physics
+    // proxies (enabling arcade overlap in PilotGameScene).
     const siloXs = [900, 1900, 2900, 4050];
     siloXs.forEach(worldX => {
-      this._enemies.push(new OrcSilo(this._scene, worldX, H));
+      this._enemies.push(new OrcSilo(this._scene, worldX, H, this._missiles));
     });
   }
 
@@ -127,39 +137,25 @@ class EnemyManager {
   // COLLISION HELPERS — called from PilotGameScene each frame.
   // ================================================================
 
-  // Tests enemy fire (bolts / missiles) against the player's hitbox.
-  // Returns true on the first hit so the caller can apply damage once.
-  //
-  // playerWorldX, playerY : centre of player hitbox in world/screen space
-  // hitW, hitH            : full hitbox dimensions in pixels
-  checkEnemyFireHitPlayer(playerWorldX, playerY, hitW, hitH) {
-    for (const e of this._enemies) {
-      if (!e.isAlive()) continue;
-      if (e instanceof OrcCannon) {
-        if (e.checkBoltsHitPlayer(playerWorldX, playerY, hitW, hitH)) return true;
-      } else if (e instanceof OrcSilo) {
-        if (e.checkMissilesHitPlayer(playerWorldX, playerY, hitW, hitH)) return true;
-      }
-    }
-    return false;
+  // checkEnemyFireHitPlayer removed — replaced by Phaser arcade overlaps in
+  // PilotGameScene (overlap pairs 3 and 4):
+  //   this.physics.add.overlap(enemyBolts, playerShip, onEnemyBoltHitPlayer)
+  //   this.physics.add.overlap(missiles,   playerShip, onMissileHitPlayer)
+
+  // checkPlayerProjectileHitEnemy removed — replaced by Phaser arcade overlaps in
+  // PilotGameScene (overlap pairs 1 and 2):
+  //   this.physics.add.overlap(playerBolts, orcCannons, onBoltHitCannon)
+  //   this.physics.add.overlap(playerBolts, orcSilos,   onBoltHitSilo)
+
+  // Returns all live OrcCannon instances — used by PilotGameScene to register
+  // arcade physics overlaps against the static structure physics bodies.
+  getCannons() {
+    return this._enemies.filter(e => e instanceof OrcCannon);
   }
 
-  // Tests a player projectile against all living enemy structures.
-  // Called once per projectile that was just fired.
-  // projectile : { worldX, y, active } object with a deactivate() method.
-  // Returns true if the projectile hit something and should be consumed.
-  checkPlayerProjectileHitEnemy(projectile) {
-    for (const e of this._enemies) {
-      if (!e.isAlive()) continue;
-      const hb = e.getStructureHitbox();
-      // AABB: projectile point vs structure rectangle
-      if (projectile.worldX >= hb.x && projectile.worldX <= hb.x + hb.w &&
-          projectile.y      >= hb.y && projectile.y      <= hb.y + hb.h) {
-        e.health.takeDamage(1);
-        return true;
-      }
-    }
-    return false;
+  // Returns all live OrcSilo instances — same purpose as getCannons().
+  getSilos() {
+    return this._enemies.filter(e => e instanceof OrcSilo);
   }
 
   // Expose the enemy array for any future systems (e.g. score counting).

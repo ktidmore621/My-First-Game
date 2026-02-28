@@ -7,9 +7,13 @@
      { mode: 'pilot' | 'gunner', plane: { ...planeConfig } }
 
    Systems:
-     - InputSystem  → virtual thumbsticks + on-screen buttons
-     - PlayerShip   → Phaser.GameObjects.Graphics + arcade physics
-     - HealthSystem → embedded inside PlayerShip
+     - InputSystem    → virtual thumbsticks + on-screen buttons
+     - PlayerShip     → Phaser.GameObjects.Graphics + arcade physics
+     - HealthSystem   → embedded inside PlayerShip
+     - Projectile     → Phaser.GameObjects.Graphics + arcade physics;
+                        pooled in three groups (player/enemy/missile)
+     - EnemyManager   → OrcCannon + OrcSilo battlefield population
+     - Arcade physics overlaps → 5 collision pairs (see _setupCollision)
 
    World layout:
      - World width:  BATTLEFIELD_W (4800 px), height: 540 px
@@ -18,6 +22,13 @@
      - Camera:       follows PlayerShip with 0.1 lag; bounds clamped to world
      - HUD:          health bar + countdown timer, setScrollFactor(0) — fixed
 
+   Collision pairs (all via physics.add.overlap):
+     1. playerBolts  → orcCannons   → camera shake 150ms
+     2. playerBolts  → orcSilos     → camera shake 150ms
+     3. enemyBolts   → playerShip   → screen flash red
+     4. missiles     → playerShip   → screen flash red + impact explosion
+     5. playerBolts  → missiles     → particle burst at intercept point
+
    Game-over conditions (placeholder):
      - Ship health → 0       → 800 ms delay → back to MainMenuScene
      - 30-second timer fires  → 400 ms delay → back to MainMenuScene
@@ -25,6 +36,10 @@
 
 // Total pixel width of the scrolling battlefield
 const BATTLEFIELD_W = 4800;
+
+// Player bolt constants
+const BOLT_SPEED   = 500;  // px/s rightward
+const BOLT_DAMAGE  = 1;    // HP per hit on OrcCannon (6-hp enemy)
 
 class PilotGameScene extends Phaser.Scene {
 
@@ -61,6 +76,32 @@ class PilotGameScene extends Phaser.Scene {
     this._buildSky(W, H);      // depth 0 — fixed, never scrolls
     this._buildGround(H);      // depth 1 — scrolls with camera
 
+    // ---- Projectile groups ----
+    // All three groups share classType: Projectile so group.get() constructs
+    // new instances on demand (up to maxSize), and runChildUpdate: true means
+    // each active Projectile's preUpdate() is called automatically each frame.
+
+    // Player's PX-9 plasma bolts — IPDF elongated bolt sprite
+    this.playerBolts = this.add.group({
+      classType:       Projectile,
+      maxSize:         30,
+      runChildUpdate:  true,
+    });
+
+    // OrcCannon orc plasma orbs — 6×6 magenta square sprite
+    this.enemyBolts = this.add.group({
+      classType:       Projectile,
+      maxSize:         50,   // 10 cannons × 5 bolts each
+      runChildUpdate:  true,
+    });
+
+    // OrcSilo missile physics proxies — invisible bodies for overlap only
+    this.missiles = this.add.group({
+      classType:       Projectile,
+      maxSize:         8,    // 4 silos × 2 missiles each
+      runChildUpdate:  true,
+    });
+
     // ---- Player ship ----
     // Spawns near the left edge, vertically centred
     this._ship = new PlayerShip(this, 120, H / 2, this._planeConf);
@@ -82,7 +123,6 @@ class PilotGameScene extends Phaser.Scene {
     // Pilot mode only needs the FIRE button; hide the others
     this._input.weaponSelectBtn.setVisible(false);
     this._input.evadeBtn.setVisible(false);
-    // FIRE is shown but currently a stub
     this._input.fireBtn.setVisible(true);
 
     // ---- HUD (fixed to viewport) ----
@@ -92,8 +132,17 @@ class PilotGameScene extends Phaser.Scene {
     // EnemyManager creates all OrcCannon / OrcSilo instances at their
     // battlefield world positions.  They register themselves with the scene
     // via scene.add.existing(), so Phaser renders them automatically.
+    // Both bolt groups are passed so enemies can acquire Projectile slots.
     const groundY = Math.floor(H * 0.72); // matches _buildGround horizonY
-    this._enemyManager = new EnemyManager(this, groundY);
+    this._enemyManager = new EnemyManager(
+      this, groundY, this.enemyBolts, this.missiles
+    );
+
+    // ---- Phaser effects ----
+    this._buildEffects();
+
+    // ---- Arcade physics collision pairs ----
+    this._setupCollision();
 
     // ---- Game state ----
     this._elapsed      = 0;
@@ -116,9 +165,9 @@ class PilotGameScene extends Phaser.Scene {
     // Ship movement + effects
     this._ship.update(this._input);
 
-    // FIRE stub — log to console until projectiles are wired up
+    // ---- FIRE player bolt ----
     if (this._input.firePressed) {
-      console.log('[PilotGameScene] FIRE pressed — projectiles not yet implemented');
+      this._firePlayerBolt();
     }
 
     // Update all enemies (OrcCannons + OrcSilos via EnemyManager)
@@ -130,14 +179,6 @@ class PilotGameScene extends Phaser.Scene {
       this.cameras.main.scrollX      // camera left-edge world X
     );
 
-    // Check enemy fire hitting the player ship
-    // Ship hitbox: 40×18 px (tight inner box, not the full visual triangle)
-    if (this._enemyManager.checkEnemyFireHitPlayer(
-      this._ship.x, this._ship.y, 40, 18
-    )) {
-      this._ship.health.takeDamage(1);
-    }
-
     // Update on-screen HUD
     this._updateHUD();
 
@@ -147,6 +188,200 @@ class PilotGameScene extends Phaser.Scene {
     }
 
     this._input.clearTaps();
+  }
+
+  // ==========================================================
+  // FIRE PLAYER BOLT
+  // ==========================================================
+
+  _firePlayerBolt() {
+    const bolt = this.playerBolts.get();
+    if (!bolt) return; // pool full — shot dropped
+
+    // Fire rightward from the ship's nose at BOLT_SPEED px/s
+    const angle = 0; // pointing right
+    bolt.fire(
+      this._ship.x + 34,  // nose tip: ship origin + half-width
+      this._ship.y,
+      BOLT_SPEED,
+      0,
+      BOLT_DAMAGE,
+      this._planeConf.color,
+      angle
+    );
+
+    // ---- Muzzle flash — particle burst at the bolt spawn point ----
+    if (this._muzzleEmitter) {
+      this._muzzleEmitter.setPosition(this._ship.x + 34, this._ship.y);
+      this._muzzleEmitter.explode(6);
+    }
+  }
+
+  // ==========================================================
+  // COLLISION SETUP — Phaser arcade physics overlaps
+  //
+  // Called once from create(). All five pairs are registered here
+  // so they run automatically every physics step (no per-frame calls).
+  // ==========================================================
+
+  _setupCollision() {
+    // ---- Pair 1: player bolts hitting OrcCannon structures ----
+    // getCannons() returns all live cannon instances — each has a static
+    // arcade body matching its structure hitbox (set up in OrcCannon ctor).
+    this.physics.add.overlap(
+      this.playerBolts,
+      this._enemyManager.getCannons(),
+      this._onBoltHitCannon,
+      null,
+      this
+    );
+
+    // ---- Pair 2: player bolts hitting OrcSilo structures ----
+    this.physics.add.overlap(
+      this.playerBolts,
+      this._enemyManager.getSilos(),
+      this._onBoltHitSilo,
+      null,
+      this
+    );
+
+    // ---- Pair 3: enemy plasma orbs hitting the player ----
+    this.physics.add.overlap(
+      this.enemyBolts,
+      this._ship,
+      this._onEnemyBoltHitPlayer,
+      null,
+      this
+    );
+
+    // ---- Pair 4: homing missiles hitting the player ----
+    this.physics.add.overlap(
+      this.missiles,
+      this._ship,
+      this._onMissileHitPlayer,
+      null,
+      this
+    );
+
+    // ---- Pair 5: player bolts intercepting in-flight missiles ----
+    this.physics.add.overlap(
+      this.playerBolts,
+      this.missiles,
+      this._onBoltInterceptMissile,
+      null,
+      this
+    );
+  }
+
+  // ==========================================================
+  // COLLISION CALLBACKS
+  // ==========================================================
+
+  // Pair 1 — player bolt hits OrcCannon structure
+  _onBoltHitCannon(bolt, cannon) {
+    if (!cannon.health || !cannon.health.isAlive()) return;
+
+    bolt.kill();
+    cannon.health.takeDamage(BOLT_DAMAGE);
+
+    // Phaser camera shake: 150ms feedback on structure hit
+    this.cameras.main.shake(150, 0.008);
+  }
+
+  // Pair 2 — player bolt hits OrcSilo structure
+  _onBoltHitSilo(bolt, silo) {
+    if (!silo.health || !silo.health.isAlive()) return;
+
+    bolt.kill();
+    silo.health.takeDamage(BOLT_DAMAGE);
+
+    this.cameras.main.shake(150, 0.008);
+  }
+
+  // Pair 3 — enemy bolt hits player ship
+  _onEnemyBoltHitPlayer(bolt, ship) {
+    if (ship._invincible) return; // spawn invincibility still active
+
+    bolt.kill();
+    ship.takeDamage(1);
+
+    // Screen flash red at low alpha — Phaser camera flash effect
+    this.cameras.main.flash(200, 255, 0, 0, false);
+  }
+
+  // Pair 4 — homing missile hits player ship
+  _onMissileHitPlayer(proxy, ship) {
+    if (ship._invincible) return;
+
+    // Ask the owning silo to run the impact explosion and deactivate the slot
+    if (proxy._missileOwner) {
+      proxy._missileOwner.detonateMissileProxy(proxy);
+    } else {
+      proxy.kill();
+    }
+
+    ship.takeDamage(25); // missiles deal heavy damage
+
+    // Screen flash red — more intense than a bolt hit
+    this.cameras.main.flash(300, 255, 0, 0, false);
+  }
+
+  // Pair 5 — player bolt intercepts a homing missile mid-air
+  _onBoltInterceptMissile(bolt, proxy) {
+    bolt.kill();
+
+    let interceptPos = null;
+    if (proxy._missileOwner) {
+      // hitMissileProxy applies one hit; returns position only when destroyed
+      interceptPos = proxy._missileOwner.hitMissileProxy(proxy);
+    }
+
+    // Phaser particle burst at the interception point
+    if (interceptPos && this._interceptEmitter) {
+      this._interceptEmitter.setPosition(interceptPos.x, interceptPos.y);
+      this._interceptEmitter.explode(12);
+    }
+  }
+
+  // ==========================================================
+  // EFFECTS — particle emitters and the damage flash overlay
+  // Called once from create()
+  // ==========================================================
+
+  _buildEffects() {
+    // Ensure the shared ship-trail texture exists (PlayerShip creates it,
+    // but we guard here in case the order changes)
+    if (!this.textures.exists('ship_trail')) {
+      const pg = this.make.graphics({ x: 0, y: 0, add: false });
+      pg.fillStyle(0xffffff, 1);
+      pg.fillRect(0, 0, 2, 2);
+      pg.generateTexture('ship_trail', 2, 2);
+      pg.destroy();
+    }
+
+    // ---- Muzzle flash — burst at the ship's nose on each shot ----
+    this._muzzleEmitter = this.add.particles(0, 0, 'ship_trail', {
+      speed:    { min: 60,  max: 180 },
+      scale:    { start: 1.0, end: 0 },
+      alpha:    { start: 1.0, end: 0 },
+      tint:     [this._planeConf.color, 0xffffff],
+      lifespan: 150,
+      quantity: 0,       // burst mode — explode() fires manually
+      emitting: false,
+      blendMode: 'ADD',
+    }).setDepth(15).setScrollFactor(1);
+
+    // ---- Missile intercept burst — particle explosion when missile is shot ----
+    this._interceptEmitter = this.add.particles(0, 0, 'ship_trail', {
+      speed:    { min: 80,  max: 250 },
+      scale:    { start: 1.5, end: 0 },
+      alpha:    { start: 1.0, end: 0 },
+      tint:     [0xff40ff, 0xff8800, 0xffffff],
+      lifespan: 300,
+      quantity: 0,
+      emitting: false,
+      blendMode: 'ADD',
+    }).setDepth(20).setScrollFactor(1);
   }
 
   // ==========================================================
