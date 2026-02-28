@@ -104,6 +104,7 @@ class Projectile extends Phaser.GameObjects.Graphics {
 
     this.setRotation(angle);
     this._draw();
+    console.log('bolt fired with body active=' + this.body.active + ' enable=' + this.body.enable);
   }
 
   // ================================================================
