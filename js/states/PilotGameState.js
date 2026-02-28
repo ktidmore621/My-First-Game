@@ -61,6 +61,24 @@
      - Real mission objectives replacing the 30-second placeholder
    ============================================================ */
 
+// ================================================================
+// LEVEL CONFIGURATION
+// ================================================================
+// Battlefield generation parameters for Level 1.
+// Pass a different config object to _generateBattlefield() for later
+// levels — count, spacing, and zone sizes all scale with difficulty.
+const LEVEL_1_CONFIG = {
+  level:             1,
+  battlefieldWidth:  5000,
+  minEnemies:        6,
+  maxEnemies:        8,
+  guaranteedCannons: 3,
+  guaranteedSilos:   2,
+  minSpacing:        280,
+  safeZoneStart:     800,
+  safeZoneEnd:       500,
+};
+
 class PilotGameState {
 
   constructor(stateManager, input, gameData) {
@@ -88,14 +106,14 @@ class PilotGameState {
     // CAMERA & WORLD OFFSET SYSTEM
     // ================================================================
 
-    // Total width of the playable battlefield in world-space pixels.
-    // 5× the canvas width gives a wide arena without being infinite.
-    this._BATTLEFIELD_W = this._W * 5; // 4800 px
+    // _BATTLEFIELD_W is assigned by _generateBattlefield() below via the
+    // level config. Declared first so all downstream code can reference it.
+    this._BATTLEFIELD_W = 0; // overwritten immediately by _generateBattlefield
 
     // _worldX: player's current X position in world space (pixels).
     //   Range: [player.width/2 … BATTLEFIELD_W − player.width/2]
-    //   Starts at 250 — safely inside the 500 px spawn-safe zone,
-    //   well clear of the first enemy at world X 800.
+    //   Starts at 250 — safely inside safeZoneStart (800 px), well
+    //   clear of the first procedurally placed enemy.
     this._worldX = 250; // safe spawn: 250 px inside the battlefield
 
     // _cameraX: world-space X of the screen's left edge (pixels).
@@ -110,38 +128,16 @@ class PilotGameState {
     // (_cameraX % TILE_W), create seamless looping. See _drawGround().
     this._TILE_W = 960;
 
-    // Pre-build the ground detail array once so we don't allocate each frame.
-    this._groundFeatures = _buildGroundFeatures();
+    // ================================================================
+    // PROCEDURAL BATTLEFIELD GENERATION
+    // ================================================================
+    // Generates enemy layout and terrain seed fresh each time a level
+    // loads. Sets this._BATTLEFIELD_W, this._enemies, this._terrainSeed.
+    this._generateBattlefield(LEVEL_1_CONFIG);
 
-    // ---- Enemy placement spacing constants ----
-    const MIN_ENEMY_SPACING = 280; // minimum world-space pixels between any two enemy structures
-    const CANNON_WIDTH      = 80;  // approximate footprint of an OrcCannon
-    const SILO_WIDTH        = 280; // approximate footprint of an OrcSilo including fence perimeter
-
-    const _groundY = Math.round(this._H * 0.72);
-
-    // ---- Unified enemy array ----
-    // All ground enemies stored in a single array regardless of type.
-    // Add future enemy types here — update/render loops iterate this._enemies
-    // automatically, so no other code needs to change.
-    //
-    // Placement order: OrcCannon, OrcSilo, OrcCannon, OrcSilo, OrcCannon, OrcSilo, OrcCannon
-    // Formula: each position = previous position + previous width + MIN_ENEMY_SPACING
-    // Safe zone: first 500 world-px clear; first enemy no earlier than world X 800.
-    //
-    // Calculated world-X centres:
-    //   Cannon 1 :   800   Silo 1 : 1160   Cannon 2 : 1720
-    //   Silo 2   : 2080   Cannon 3 : 2640   Silo 3   : 3000   Cannon 4 : 3560
-    let _ex = 800;
-    this._enemies = [
-      new OrcCannon(_ex,                                       _groundY), //  800
-      new OrcSilo  (_ex += CANNON_WIDTH + MIN_ENEMY_SPACING,   _groundY), // 1160
-      new OrcCannon(_ex += SILO_WIDTH   + MIN_ENEMY_SPACING,   _groundY), // 1720
-      new OrcSilo  (_ex += CANNON_WIDTH + MIN_ENEMY_SPACING,   _groundY), // 2080
-      new OrcCannon(_ex += SILO_WIDTH   + MIN_ENEMY_SPACING,   _groundY), // 2640
-      new OrcSilo  (_ex += CANNON_WIDTH + MIN_ENEMY_SPACING,   _groundY), // 3000
-      new OrcCannon(_ex += SILO_WIDTH   + MIN_ENEMY_SPACING,   _groundY), // 3560
-    ];
+    // Build the ground detail tile using this run's terrain seed.
+    // Same seed always yields the same tile layout — consistent mid-run.
+    this._groundFeatures = _buildGroundFeatures(this._terrainSeed);
 
     // Register death callback
     this._player.health.onDeath(() => {
@@ -195,6 +191,82 @@ class PilotGameState {
     // Time accumulator for the 0.6-second size-pulse on the arrow
     // that appears when no threats remain ahead in the direction of travel.
     this._arrowPulseT = 0;
+  }
+
+  // ================================================================
+  // PROCEDURAL BATTLEFIELD GENERATION
+  // ================================================================
+  // Populates this._BATTLEFIELD_W, this._enemies, and this._terrainSeed
+  // from the provided level config. Called once from the constructor.
+  //
+  // Enemy count:  random integer in [config.minEnemies, config.maxEnemies].
+  // Type mix:     guaranteed cannons + guaranteed silos placed first; any
+  //               remaining slots filled at 60 % cannon / 40 % silo.
+  // Order:        the full type list is Fisher-Yates shuffled so the
+  //               arrangement is different every run.
+  // Spacing:      each enemy is preceded by a random gap in the range
+  //               [minSpacing, minSpacing × 2.2] world-px.
+  // Placement stops early if the next enemy would fall inside the right
+  // safe zone (last config.safeZoneEnd px of the battlefield).
+  _generateBattlefield(config) {
+    // Step 1 — Battlefield width comes directly from config
+    this._BATTLEFIELD_W = config.battlefieldWidth;
+
+    // Step 2 — Determine total enemy count and build the type list
+    const totalEnemies = config.minEnemies +
+      Math.floor(Math.random() * (config.maxEnemies - config.minEnemies + 1));
+
+    // Guaranteed units first; extra slots filled at 60/40 cannon-to-silo ratio
+    const extraSlots = Math.max(0, totalEnemies - config.guaranteedCannons - config.guaranteedSilos);
+    const types      = [];
+    for (let i = 0; i < config.guaranteedCannons; i++) types.push('cannon');
+    for (let i = 0; i < config.guaranteedSilos;   i++) types.push('silo');
+    for (let i = 0; i < extraSlots; i++) {
+      types.push(Math.random() < 0.6 ? 'cannon' : 'silo');
+    }
+
+    // Fisher-Yates shuffle — randomise placement order each run
+    for (let i = types.length - 1; i > 0; i--) {
+      const j   = Math.floor(Math.random() * (i + 1));
+      const tmp = types[i]; types[i] = types[j]; types[j] = tmp;
+    }
+
+    // Step 3 — Place enemies with guaranteed minimum spacing
+    const CANNON_FOOTPRINT = 80;   // world-px width of one OrcCannon structure
+    const SILO_FOOTPRINT   = 280;  // world-px width of one OrcSilo including perimeter
+    const groundY          = Math.round(this._H * 0.72);
+    const rightBound       = config.battlefieldWidth - config.safeZoneEnd;
+
+    let cursor    = config.safeZoneStart;
+    this._enemies = [];
+
+    for (const type of types) {
+      const footprint = type === 'cannon' ? CANNON_FOOTPRINT : SILO_FOOTPRINT;
+      // Random gap before this enemy: [minSpacing, minSpacing × 2.2]
+      const jitter   = config.minSpacing +
+        Math.random() * (config.minSpacing * 2.2 - config.minSpacing);
+      const position = cursor + jitter;
+
+      // Honour right-edge safe zone — stop early if needed
+      if (position + footprint > rightBound) break;
+
+      this._enemies.push(
+        type === 'cannon'
+          ? new OrcCannon(position, groundY)
+          : new OrcSilo(position, groundY)
+      );
+      cursor = position + footprint; // advance past this structure
+    }
+
+    // Step 5 — Terrain seed: float 0–1000, used by _buildGroundFeatures()
+    this._terrainSeed = Math.random() * 1000;
+
+    // Step 4 — Console report for verification
+    const typeList = this._enemies.map(e => e.constructor.name).join(', ');
+    console.log(
+      `[Battlefield] Generated ${this._enemies.length} enemies across ${this._BATTLEFIELD_W}px battlefield`
+    );
+    console.log(`[Battlefield] Terrain seed: ${this._terrainSeed.toFixed(1)} | Placement: ${typeList}`);
   }
 
   enter() {
@@ -820,12 +892,24 @@ class PilotGameState {
    The draw functions use only ctx primitives — no images needed.
    ============================================================ */
 
-function _buildGroundFeatures() {
+function _buildGroundFeatures(seed = 0) {
   const features = [];
 
+  // ---- Deterministic seeded random ----
+  // Formula from spec: returns a float in approx [0.1715, 0.2512].
+  // srf() normalises that to [0, 1] so it can drive position offsets.
+  // Each call increments the internal counter so every feature gets a
+  // unique value — same seed always produces the same tile layout.
+  let _n = 0;
+  const seededRand = (n) => ((Math.sin(seed + n) * 9301 + 49297) % 233280) / 233280;
+  const sr  = () => seededRand(_n++);
+  // Theoretical output range: min = 39996/233280 ≈ 0.1715, max = 58598/233280 ≈ 0.2512
+  const srf = () => Math.max(0, Math.min(1, (sr() - 0.1715) / (0.2512 - 0.1715)));
+
   // ---- Roads ----
-  // Each road spans the full 960px tile width so it appears as a continuous
-  // horizontal band across the scrolling ground.
+  // Each road spans the full 960px tile width — they appear as continuous
+  // horizontal bands across the scrolling ground. Roads are fixed (no seed
+  // variation) because they need to line up at tile seams.
   [[0.13], [0.52]].forEach(([yFrac]) => {
     features.push({
       x: 0, y: yFrac,
@@ -833,7 +917,7 @@ function _buildGroundFeatures() {
         // Dark asphalt strip
         ctx.fillStyle = 'rgba(30, 22, 14, 0.78)';
         ctx.fillRect(px, py - 5, 960, 10);
-        // Faded centre-line dashes (spacing chosen to look natural at scroll speed)
+        // Faded centre-line dashes
         ctx.fillStyle = 'rgba(58, 48, 32, 0.55)';
         for (let mx = 0; mx < 960; mx += 60) {
           ctx.fillRect(px + mx, py - 1, 28, 2);
@@ -843,12 +927,17 @@ function _buildGroundFeatures() {
   });
 
   // ---- Bomb craters ----
-  // Dark rectangular pits with a sandy ejecta ring — pixel-art style, no ellipses.
+  // 8 craters spread across the tile. Base positions are evenly distributed;
+  // seed varies each crater's exact x (±60 px), y (±0.10), and radius (±4).
+  // Pixel-art style: flat ejecta ring + dark pit, no ellipses (Style Guide rule 4).
   [
     [75,  0.28, 14], [195, 0.65, 17], [330, 0.38, 11],
     [460, 0.72, 19], [560, 0.22, 13], [680, 0.58, 15],
     [790, 0.42, 12], [900, 0.75, 18],
-  ].forEach(([fx, fy, r]) => {
+  ].forEach(([bx, by, br]) => {
+    const fx = Math.max(10,   Math.min(950,  Math.round(bx + srf() * 120 - 60)));
+    const fy = Math.max(0.15, Math.min(0.85, by + srf() * 0.20 - 0.10));
+    const r  = Math.max(9,    Math.min(22,   Math.round(br + srf() * 8   - 4)));
     features.push({
       x: fx, y: fy, r,
       draw(ctx, px, py, f) {
@@ -868,13 +957,17 @@ function _buildGroundFeatures() {
 
   // ---- Scorched / burned patches ----
   // Dark solid rectangles — napalm strikes, oil fires, vehicle burn-outs.
-  // Pixel-art style: flat rectangles, no ellipses (Visual Style Guide rule 4).
+  // Seed varies position (±40 px, ±0.08) and size (±10 w, ±6 h).
   [
     [145, 0.44, 54, 24], [310, 0.78, 62, 28], [500, 0.30, 46, 20],
     [720, 0.62, 52, 24], [870, 0.48, 40, 18],
-  ].forEach(([fx, fy, w, h]) => {
+  ].forEach(([bx, by, bw, bh]) => {
+    const fx = Math.max(40,   Math.min(920,  Math.round(bx + srf() * 80  - 40)));
+    const fy = Math.max(0.20, Math.min(0.80, by + srf() * 0.16 - 0.08));
+    const fw = Math.max(36,   Math.min(72,   Math.round(bw + srf() * 20  - 10)));
+    const fh = Math.max(15,   Math.min(33,   Math.round(bh + srf() * 12  - 6)));
     features.push({
-      x: fx, y: fy, w, h,
+      x: fx, y: fy, w: fw, h: fh,
       draw(ctx, px, py, f) {
         ctx.fillStyle = '#0e0903';
         ctx.fillRect(Math.floor(px - f.w / 2), Math.floor(py - f.h / 2), f.w, f.h);
@@ -884,12 +977,16 @@ function _buildGroundFeatures() {
 
   // ---- Sandy lighter patches ----
   // Flat tan rectangles to break up the uniform ground colour.
-  // Pixel-art style: solid fillRect, no ellipses (Visual Style Guide rule 4).
+  // Seed varies position (±40 px, ±0.08) and size (±10 w, ±5 h).
   [
     [220, 0.55, 52, 22], [490, 0.20, 44, 18], [740, 0.80, 58, 26],
-  ].forEach(([fx, fy, w, h]) => {
+  ].forEach(([bx, by, bw, bh]) => {
+    const fx = Math.max(40,   Math.min(920,  Math.round(bx + srf() * 80  - 40)));
+    const fy = Math.max(0.15, Math.min(0.85, by + srf() * 0.16 - 0.08));
+    const fw = Math.max(34,   Math.min(62,   Math.round(bw + srf() * 20  - 10)));
+    const fh = Math.max(14,   Math.min(26,   Math.round(bh + srf() * 10  - 5)));
     features.push({
-      x: fx, y: fy, w, h,
+      x: fx, y: fy, w: fw, h: fh,
       draw(ctx, px, py, f) {
         ctx.fillStyle = '#695830';
         ctx.fillRect(Math.floor(px - f.w / 2), Math.floor(py - f.h / 2), f.w, f.h);
@@ -899,9 +996,12 @@ function _buildGroundFeatures() {
 
   // ---- Rubble piles ----
   // Clusters of small rectangles simulating broken concrete and debris.
+  // Seed varies position (±50 px, ±0.07).
   [
     [380, 0.48], [610, 0.33], [820, 0.68], [130, 0.82],
-  ].forEach(([fx, fy]) => {
+  ].forEach(([bx, by]) => {
+    const fx = Math.max(30,   Math.min(930,  Math.round(bx + srf() * 100 - 50)));
+    const fy = Math.max(0.25, Math.min(0.85, by + srf() * 0.14 - 0.07));
     features.push({
       x: fx, y: fy,
       draw(ctx, px, py) {
