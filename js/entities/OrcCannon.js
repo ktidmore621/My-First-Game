@@ -76,16 +76,30 @@ class OrcCannon {
     this._pulseT       = 0;       // ever-incrementing time for glow oscillation
 
     // ---- Outgoing plasma bolts — small pool, max 5 in-flight ----
-    // Each slot: { active, worldX, y, originY, velocityX, velocityY }
-    // worldX is world-space (static — bolts fire straight up, no X drift).
-    // y and velocityY are screen-space; originY records launch Y for culling.
+    // Each slot: { active, worldX, y, originWorldX, originY, velocityX, velocityY }
+    // worldX is world-space (may drift with sway angle).
+    // y and velocityY are screen-space; originWorldX/originY record launch for culling.
     this._bolts = Array.from({ length: 5 }, () => ({
-      active: false, worldX: 0, y: 0, originY: 0, velocityX: 0, velocityY: 0,
+      active: false, worldX: 0, y: 0, originWorldX: 0, originY: 0, velocityX: 0, velocityY: 0,
     }));
 
     // ---- Damage-state rendering flags ----
     this._crackVisible = false; // drawn on left strut after hit 2
     this._platformTilt = 0;    // 3px offset applied to platform + orc + cannon after hit 4
+
+    // ---- Sway animation — two-oscillator irregular aim wander ----
+    // Per-instance random phase offsets ensure each cannon has unique sway timing.
+    // swayAngle = sin(t*0.8 + phase1)*12 + sin(t*1.3 + phase2)*6
+    // Range: ±18 degrees. Scaled to 0 during windup as cannon locks on target.
+    this._swayT        = 0;
+    this._swayPhase1   = Math.random() * Math.PI * 2; // phase for oscillator 1 (f=0.8)
+    this._swayPhase2   = Math.random() * Math.PI * 2; // phase for oscillator 2 (f=1.3)
+    this._swayAngleDeg = 0;                           // current display sway in degrees
+
+    // ---- Recoil animation ----
+    // 3-frame sine-bump kicking the barrel backward 4px then returning.
+    this._recoilTimer  = 0; // counts down 3/60 → 0 after each shot
+    this._recoilOffset = 0; // 0→4→0 px along barrel axis during recoil
 
     // ---- Death / explosion animation ----
     this._dying           = false;
@@ -136,14 +150,35 @@ class OrcCannon {
       return;
     }
 
+    // ---- Sway oscillation — runs unconditionally, scaled by windup state ----
+    // _swayT always accumulates so the oscillation continues smoothly after firing.
+    // During windup the displayed angle is multiplied down to 0, freezing aim.
+    this._swayT += dt;
+    const rawSway = Math.sin(this._swayT * 0.8 + this._swayPhase1) * 12
+                  + Math.sin(this._swayT * 1.3 + this._swayPhase2) * 6;
+    const swayScale = this._state === 'windup'
+      ? Math.max(0, 1.0 - this._windupTimer / 0.75) // 1→0 as windup progresses
+      : 1.0;
+    this._swayAngleDeg = rawSway * swayScale;
+
+    // ---- Recoil timer — 3-frame sine-bump after each shot ----
+    if (this._recoilTimer > 0) {
+      const RECOIL_DUR = 3 / 60;
+      this._recoilTimer = Math.max(0, this._recoilTimer - dt);
+      const progress = 1 - this._recoilTimer / RECOIL_DUR; // 0→1
+      this._recoilOffset = Math.sin(progress * Math.PI) * 4; // 0→4→0 px
+    } else {
+      this._recoilOffset = 0;
+    }
+
     // ---- Advance in-flight bolts; cull any that have traveled too far ----
     this._bolts.forEach(b => {
       if (!b.active) return;
       b.worldX += b.velocityX * dt;
       b.y      += b.velocityY * dt;
-      // Deactivate after 600px of travel from launch point.
-      // Bolts fire straight up so only the Y axis needs measuring.
-      if (Math.abs(b.y - b.originY) > 600) {
+      // Deactivate after 600px of travel — bolts may fly at an angle,
+      // so cull on 2D distance rather than Y axis alone.
+      if (Math.hypot(b.worldX - b.originWorldX, b.y - b.originY) > 600) {
         b.active = false;
       }
     });
@@ -299,26 +334,38 @@ class OrcCannon {
   // PRIVATE — FIRING
   // ================================================================
 
-  // Acquire an inactive bolt slot and fire it straight upward from the
-  // barrel tip. The bolt does not track — it travels at a fixed 300 px/s
-  // in the negative-Y direction (upward in screen space), aimed to pass
-  // through the player's altitude at the moment of firing.
+  // Acquire an inactive bolt slot and fire it in the direction of the current
+  // sway angle. Shots during a wide sway arc left or right — the player must
+  // watch the barrel to predict incoming fire.
+  //
+  // FIX 3: firing direction matches live swayAngle at moment of shot.
+  //   velocityX = sin(fireAngle) * SPEED
+  //   velocityY = -cos(fireAngle) * SPEED
   _fireBolt(targetWorldX, targetY) { // eslint-disable-line no-unused-vars
     const b = this._bolts.find(b => !b.active);
     if (!b) return; // all 5 slots in-flight — shot dropped silently
 
-    // Barrel mouth: horizontally centred on the cannon, at the bore tip
-    const tipWorldX = this.worldX;
-    const tipY      = this._groundY - 149; // top of the cannon bore (scaled)
+    const SPEED = 300; // world-space px/s
 
-    const SPEED = 300; // world-space px/s — bolt travels straight upward
+    // Fire angle from live sway (0° during windup lock; free during firing state).
+    const fireAngleRad = this._swayAngleDeg * Math.PI / 180;
 
-    b.active    = true;
-    b.worldX    = tipWorldX; // fixed in world space — bolt has no X drift
-    b.y         = tipY;
-    b.originY   = tipY;      // reference point for the 600px travel-distance cull
-    b.velocityX = 0;         // no horizontal component — straight up only
-    b.velocityY = -SPEED;    // negative Y = upward in screen space
+    // Barrel tip position — rotate bore tip around cannon pivot (groundY-108).
+    // Bore tip is 37px above pivot along the barrel axis.
+    const BARREL_TIP_DIST = 37;
+    const tipWorldX = this.worldX + Math.sin(fireAngleRad) * BARREL_TIP_DIST;
+    const tipY      = this._groundY - 108 - Math.cos(fireAngleRad) * BARREL_TIP_DIST;
+
+    b.active       = true;
+    b.worldX       = tipWorldX;
+    b.y            = tipY;
+    b.originWorldX = tipWorldX; // for 2D travel-distance cull
+    b.originY      = tipY;
+    b.velocityX    = Math.sin(fireAngleRad) * SPEED;   // horizontal spread from sway
+    b.velocityY    = -Math.cos(fireAngleRad) * SPEED;  // upward in screen space
+
+    // Trigger 3-frame recoil animation
+    this._recoilTimer = 3 / 60;
   }
 
   // ================================================================
@@ -467,6 +514,10 @@ class OrcCannon {
     const t  = this._platformTilt; // 0 or 3 — shifts platform/orc/cannon right
     const ox = t;                  // orc X offset (tracks platform)
     const cx = t;                  // cannon X offset (tracks platform)
+    // Head lean: upper body shifts slightly in the direction of the sway.
+    // Capped to whole pixels; max ±3px at full 18° sway.
+    const leanX = Math.round(this._swayAngleDeg * 0.15);
+    const hx = ox + leanX;        // head + plume lean offset
 
     // ----------------------------------------------------------------
     // BASE — wide dark iron plate, worn texture, bolt heads, rust stains
@@ -693,180 +744,207 @@ class OrcCannon {
     ctx.fillRect( 8 + ox, -90, 2, 5);
 
     // Head — blocky orc skull, 10 px wide × 7 px tall
+    // Uses hx (= ox + leanX) so the head sways slightly with the barrel.
     ctx.fillStyle = '#4a9420';           // rich mid-green orc skin
-    ctx.fillRect(-5 + ox, -95, 10, 7);
+    ctx.fillRect(-5 + hx, -95, 10, 7);
     // Right-side shadow column (1 px darker green) — depth / jaw shadow
     ctx.fillStyle = '#3a7a18';
-    ctx.fillRect( 4 + ox, -95, 1, 7);
+    ctx.fillRect( 4 + hx, -95, 1, 7);
     // Helmet rim — top 2 rows recoloured as dark armour material
     ctx.fillStyle = '#2a2018';
-    ctx.fillRect(-5 + ox, -95, 10, 2);
+    ctx.fillRect(-5 + hx, -95, 10, 2);
     // Helmet brass rivets — 1 px at each side of the rim
     ctx.fillStyle = '#8a6a20';
-    ctx.fillRect(-5 + ox, -94, 1, 1);   // left rivet
-    ctx.fillRect( 3 + ox, -94, 1, 1);   // right rivet
+    ctx.fillRect(-5 + hx, -94, 1, 1);   // left rivet
+    ctx.fillRect( 3 + hx, -94, 1, 1);   // right rivet
 
     // Eyes — 2×2 px bright yellow, menacing
     ctx.fillStyle = '#ffcc00';
-    ctx.fillRect(-3 + ox, -92, 2, 2);   // left eye
-    ctx.fillRect( 1 + ox, -92, 2, 2);   // right eye
+    ctx.fillRect(-3 + hx, -92, 2, 2);   // left eye
+    ctx.fillRect( 1 + hx, -92, 2, 2);   // right eye
     // Inner highlight glint (top-left pixel of each eye)
     ctx.fillStyle = '#ffff88';
-    ctx.fillRect(-3 + ox, -92, 1, 1);
-    ctx.fillRect( 1 + ox, -92, 1, 1);
+    ctx.fillRect(-3 + hx, -92, 1, 1);
+    ctx.fillRect( 1 + hx, -92, 1, 1);
 
     // Mouth — 1 px dark sneer line across middle of lower face
     ctx.fillStyle = '#1a0a00';
-    ctx.fillRect(-3 + ox, -90, 5, 1);   // orc sneer
+    ctx.fillRect(-3 + hx, -90, 5, 1);   // orc sneer
     // Tusks — 1 px wide ivory pixels, 2 px extending down at each corner
     ctx.fillStyle = '#e8d090';           // ivory
-    ctx.fillRect(-3 + ox, -89, 1, 2);   // left tusk
-    ctx.fillRect( 2 + ox, -89, 1, 2);   // right tusk
+    ctx.fillRect(-3 + hx, -89, 1, 2);   // left tusk
+    ctx.fillRect( 2 + hx, -89, 1, 2);   // right tusk
 
     // Neon fur plume — individual 1 px wide strands at varied heights
-    // Heights differ by 1–2 px for organic, non-blocky silhouette
+    // Heights differ by 1–2 px for organic, non-blocky silhouette.
+    // Uses hx so the plume leans with the head during sway.
     ctx.fillStyle = '#ff44cc';           // bright pink
-    ctx.fillRect(-3 + ox, -103, 1, 8);  // strand 1 — tallest (8 px)
+    ctx.fillRect(-3 + hx, -103, 1, 8);  // strand 1 — tallest (8 px)
     ctx.fillStyle = '#ff00ff';           // hot magenta
-    ctx.fillRect(-2 + ox, -101, 1, 6);  // strand 2 (6 px)
+    ctx.fillRect(-2 + hx, -101, 1, 6);  // strand 2 (6 px)
     ctx.fillStyle = '#cc44ff';           // pale purple
-    ctx.fillRect(-1 + ox, -102, 1, 7);  // strand 3 (7 px)
+    ctx.fillRect(-1 + hx, -102, 1, 7);  // strand 3 (7 px)
     ctx.fillStyle = '#ff44cc';           // bright pink
-    ctx.fillRect( 0 + ox, -103, 1, 8);  // strand 4 — tallest (8 px)
+    ctx.fillRect( 0 + hx, -103, 1, 8);  // strand 4 — tallest (8 px)
     ctx.fillStyle = '#ff88ff';           // light pink
-    ctx.fillRect( 1 + ox, -100, 1, 5);  // strand 5 — shortest (5 px)
+    ctx.fillRect( 1 + hx, -100, 1, 5);  // strand 5 — shortest (5 px)
     ctx.fillStyle = '#ff00ff';           // hot magenta
-    ctx.fillRect( 2 + ox, -102, 1, 7);  // strand 6 (7 px)
+    ctx.fillRect( 2 + hx, -102, 1, 7);  // strand 6 (7 px)
     ctx.fillStyle = '#cc44ff';           // pale purple
-    ctx.fillRect( 3 + ox, -101, 1, 6);  // strand 7 (6 px)
+    ctx.fillRect( 3 + hx, -101, 1, 6);  // strand 7 (6 px)
 
-    // Forearms gripping the crank handle.
-    // Both arms extend up outside the cannon barrel so they read clearly
-    // against the structure. Cannon barrel covers the gap between head
-    // and fist naturally since it is drawn on top.
+    // ================================================================
+    // SWAYING PARTS — cannon body, barrel, arms, power cell.
+    // All rotate around the cannon mount pivot at y=−108 (groundY origin).
+    // ctx.translate(cx, -108) brings the pivot to the local origin;
+    // ctx.rotate() applies the sway; coordinates below are relative to
+    // that pivot (original y + 108, x − cx).
+    // ================================================================
+    const swayRad = this._swayAngleDeg * Math.PI / 180;
+    ctx.save();
+    ctx.translate(cx, -108); // pivot = bottom of cannon body
+    ctx.rotate(swayRad);
 
-    // Left forearm — bare green skin, left of barrel
-    ctx.fillStyle = '#4a9420';           // orc skin
-    ctx.fillRect(-8 + ox, -122, 2, 34); // shaft from shoulder (y=−88) to fist top
-    // Knuckle pixels — 1 px bright green highlights on left fist
+    // ---- FOREARMS (shortened to match new barrel length) ----
+    // Pivot is at y=0 in this context; shoulder is at y=+20 (i.e. y=−88 world).
+    // Left fist top is at y=−8 (world y=−116); right fist top at y=−10 (−118).
+
+    // Left forearm — bare green skin
+    ctx.fillStyle = '#4a9420';
+    ctx.fillRect(-8, -8, 2, 28);  // shaft y=−8 to y=+20 (shoulder level)
     ctx.fillStyle = '#6ab830';
-    ctx.fillRect(-8 + ox, -122, 2, 1);  // top knuckle row
-    ctx.fillRect(-7 + ox, -121, 1, 1);  // secondary knuckle pixel
+    ctx.fillRect(-8, -8, 2, 1);   // top knuckle row
+    ctx.fillRect(-7, -7, 1, 1);   // secondary knuckle pixel
 
-    // Right forearm — brass-augmented arm, right of barrel, reaching to crank
-    ctx.fillStyle = '#7a5a18';           // brass/metal
-    ctx.fillRect( 8 + ox, -124, 3, 36); // shaft from shoulder (y=−88) to fist top
-    // Horizontal fist section extending right toward the crank grip
-    ctx.fillRect( 8 + ox, -124, 5, 3);  // fist/hand wrapping over crank arm
-    // Knuckle highlight on right fist — polished metal augment
+    // Right forearm — brass-augmented arm
+    ctx.fillStyle = '#7a5a18';
+    ctx.fillRect( 8, -10, 3, 30); // shaft y=−10 to y=+20
+    ctx.fillRect( 8, -10, 5,  3); // fist wrapping over crank arm
     ctx.fillStyle = '#c4a040';
-    ctx.fillRect( 8 + ox, -124, 5, 1);  // bright top-of-fist edge
-    ctx.fillRect(12 + ox, -124, 1, 3);  // right grip highlight
+    ctx.fillRect( 8, -10, 5,  1); // bright top-of-fist edge
+    ctx.fillRect(12, -10, 1,  3); // right grip highlight
 
     // ----------------------------------------------------------------
-    // CANNON — chunky hand-cranked barrel, asymmetric and improvised.
-    // Shifts with platform via cx.
+    // CANNON BODY — wider, chunkier mount (17px wide vs old 11px).
+    // In the rotated context: pivot=y0, body top=y−20, bottom=y0.
     // ----------------------------------------------------------------
-
-    // Cannon body — thick base block mounted behind the barrel
     ctx.fillStyle = '#4a3a2a';
-    ctx.fillRect( -5 + cx, -126, 11, 18);
+    ctx.fillRect(-8, -20, 17, 20);  // main body: 17px wide, 20px tall
 
-    // Barrel — 11 px wide, extends 21 px upward
-    ctx.fillStyle = '#382a1a';
-    ctx.fillRect( -5 + cx, -147, 11, 21);
+    // Top-face highlight — shows the thickness of the mounting block
+    ctx.fillStyle = '#5a4a3a';
+    ctx.fillRect(-8, -20, 17, 2);
+    // Horizontal panel seams — surface detail
+    ctx.fillStyle = '#3a2a1a';
+    ctx.fillRect(-8, -14, 17, 1);   // mid-panel seam
+    ctx.fillRect(-8, -10, 17, 1);   // lower seam
 
-    // ---- Cooling vents along barrel left side ----
-    // Five 1px dark slots; a bright highlight pixel sits above each
+    // Side bolt heads — heavy weapon mount detail
+    ctx.fillStyle = '#8a7060';
+    ctx.fillRect(-7, -19, 1, 1);    // TL bolt
+    ctx.fillRect( 7, -19, 1, 1);    // TC bolt
+    ctx.fillRect( 7, -13, 1, 1);    // MC bolt
+    ctx.fillRect(-7, -13, 1, 1);    // ML bolt
     ctx.fillStyle = '#1a1208';
-    ctx.fillRect(-5 + cx, -143, 1, 1);
-    ctx.fillRect(-5 + cx, -139, 1, 1);
-    ctx.fillRect(-5 + cx, -135, 1, 1);
-    ctx.fillRect(-5 + cx, -131, 1, 1);
-    ctx.fillRect(-5 + cx, -127, 1, 1);
-    ctx.fillStyle = '#6a5840';              // bright highlight above each slot
-    ctx.fillRect(-5 + cx, -144, 1, 1);
-    ctx.fillRect(-5 + cx, -140, 1, 1);
-    ctx.fillRect(-5 + cx, -136, 1, 1);
-    ctx.fillRect(-5 + cx, -132, 1, 1);
-    ctx.fillRect(-5 + cx, -128, 1, 1);
-
-    // ---- Barrel bore at tip — 2px dark outer ring, 1px bright center ----
-    ctx.fillStyle = '#0a0806';              // very dark outer ring (2px border)
-    ctx.fillRect(-2 + cx, -149, 4, 4);
-    ctx.fillStyle = '#2a2018';              // medium dark inner area
-    ctx.fillRect(-1 + cx, -148, 2, 2);
-    ctx.fillStyle = '#585040';              // faint glint at bore centre
-    ctx.fillRect(  0 + cx, -148, 1, 1);
-
-    // ---- Weld lines where barrel meets mounting ----
-    // Alternating bright/lighter 1px pixels suggest fresh tack welds
-    ctx.fillStyle = '#c8b080';
-    ctx.fillRect(-4 + cx, -126, 1, 1);
-    ctx.fillRect(-2 + cx, -126, 1, 1);
-    ctx.fillRect( 0 + cx, -126, 1, 1);
-    ctx.fillRect( 2 + cx, -126, 1, 1);
-    ctx.fillRect( 4 + cx, -126, 1, 1);
-    ctx.fillStyle = '#e0c890';              // brighter accent welds between above
-    ctx.fillRect(-3 + cx, -126, 1, 1);
-    ctx.fillRect( 1 + cx, -126, 1, 1);
-    ctx.fillRect( 3 + cx, -126, 1, 1);
-
-    // ---- Orc glyph / scratch marks on barrel right side ----
-    // A few 1px angular lines — the crew has marked their weapon
-    ctx.fillStyle = '#6a5840';
-    ctx.fillRect( 3 + cx, -142, 1, 5);     // vertical stroke
-    ctx.fillRect( 2 + cx, -142, 2, 1);     // top horizontal tick
-    ctx.fillRect( 2 + cx, -139, 2, 1);     // mid horizontal tick
-    ctx.fillRect( 3 + cx, -136, 2, 1);     // angled bottom stroke (offset right)
+    ctx.fillRect(-7, -18, 1, 1);    // TL shadow
+    ctx.fillRect( 7, -18, 1, 1);    // TC shadow
+    ctx.fillRect( 7, -12, 1, 1);    // MC shadow
+    ctx.fillRect(-7, -12, 1, 1);    // ML shadow
 
     // ---- Ammunition feed — makeshift angled pipe on the left side ----
-    // Three fillRect pieces suggest a crude reload mechanism bolted on
     ctx.fillStyle = '#4a3a2a';
-    ctx.fillRect(-9 + cx, -120, 5, 3);     // stub connecting to cannon body
+    ctx.fillRect(-13, -12, 5, 3);   // stub connecting to body left edge
     ctx.fillStyle = '#3a2a1a';
-    ctx.fillRect(-12 + cx, -118, 4, 2);    // angled elbow going down-left
-    ctx.fillRect(-14 + cx, -116, 3, 2);    // further down-left segment
+    ctx.fillRect(-16, -10, 4, 2);   // angled elbow going left
+    ctx.fillRect(-18,  -8, 3, 2);   // further down-left segment
     ctx.fillStyle = '#2a1a0e';
-    ctx.fillRect(-14 + cx, -115, 2, 3);    // pipe end cap
+    ctx.fillRect(-18,  -7, 2, 3);   // pipe end cap
     ctx.fillStyle = '#6a5840';
-    ctx.fillRect(-9 + cx, -120, 5, 1);     // top-face highlight (tube illusion)
+    ctx.fillRect(-13, -12, 5, 1);   // top-face highlight (tube illusion)
 
-    // Crank handle — L-shaped pair of rectangles on the right side
+    // ---- Crank handle — L-shaped, right side of cannon body ----
+    // Horizontal arm starts at right body edge (x=9); vertical grip below
     ctx.fillStyle = '#5a4a3a';
-    ctx.fillRect(  5 + cx, -133,  9, 4); // horizontal arm of L
-    ctx.fillRect( 12 + cx, -137,  4, 9); // vertical grip of L
+    ctx.fillRect(  9, -25,  8, 4);  // horizontal arm of L
+    ctx.fillRect( 15, -29,  4, 8);  // vertical grip of L
 
-    // ---- Crank grip texture — alternating 2px dark and lighter wrap bands ----
-    ctx.fillStyle = '#3a2a1a';              // dark grip band
-    ctx.fillRect( 12 + cx, -137, 4, 2);
-    ctx.fillRect( 12 + cx, -133, 4, 2);
-    ctx.fillRect( 12 + cx, -129, 4, 1);    // final partial band
-    ctx.fillStyle = '#6a5848';              // lighter grip band
-    ctx.fillRect( 12 + cx, -135, 4, 2);
-    ctx.fillRect( 12 + cx, -131, 4, 2);
+    // Crank grip texture — alternating dark/lighter wrap bands
+    ctx.fillStyle = '#3a2a1a';
+    ctx.fillRect( 15, -29, 4, 2);   // dark band
+    ctx.fillRect( 15, -25, 4, 2);   // dark band
+    ctx.fillRect( 15, -21, 4, 1);   // final partial band
+    ctx.fillStyle = '#6a5848';
+    ctx.fillRect( 15, -27, 4, 2);   // lighter band
+    ctx.fillRect( 15, -23, 4, 2);   // lighter band
+
+    // ---- Weld lines at barrel-to-body junction (top of cannon body, y=−20) ----
+    ctx.fillStyle = '#c8b080';
+    ctx.fillRect(-7, -20, 1, 1);
+    ctx.fillRect(-5, -20, 1, 1);
+    ctx.fillRect(-3, -20, 1, 1);
+    ctx.fillRect(-1, -20, 1, 1);
+    ctx.fillRect( 1, -20, 1, 1);
+    ctx.fillRect( 3, -20, 1, 1);
+    ctx.fillRect( 5, -20, 1, 1);
+    ctx.fillStyle = '#e0c890';
+    ctx.fillRect(-6, -20, 1, 1);
+    ctx.fillRect(-2, -20, 1, 1);
+    ctx.fillRect( 0, -20, 1, 1);
+    ctx.fillRect( 4, -20, 1, 1);
 
     // ----------------------------------------------------------------
-    // VOIDHEART ORE POWER CELL — 10×10 px mounted on right side of cannon.
-    // Layout: 2px dark border surrounding a 6×6 bright inner core.
-    //
-    // Color scheme:
-    //   idle    : dim dark purplish-red — barely alive
-    //   firing  : bright pulsing purplish-red/pink — active danger
-    //   windup  : high-contrast deep maroon → white-pink flashes
-    //
-    // Wind-up: three concentric 1px rings expand outward in progressively
-    // brighter pink, alpha driven by glow. White flash for 2 frames at
-    // the instant just before the first shot fires.
+    // BARREL — 30% shorter than original (15px vs 21px), same width.
+    // Recoil offset (ro) pushes barrel downward along barrel axis
+    // for a 3-frame kick on each shot then springs back.
+    // In rotated context: barrel top=y−35, bottom=y−20.
+    // ----------------------------------------------------------------
+    const ro = Math.round(this._recoilOffset); // 0→4→0 px recoil push
+
+    ctx.fillStyle = '#382a1a';
+    ctx.fillRect(-5, -35 + ro, 11, 15); // barrel body: 11px wide, 15px tall
+
+    // ---- Cooling vents along barrel left side (3 slots, spaced evenly) ----
+    ctx.fillStyle = '#1a1208';
+    ctx.fillRect(-5, -31 + ro, 1, 1);
+    ctx.fillRect(-5, -27 + ro, 1, 1);
+    ctx.fillRect(-5, -23 + ro, 1, 1);
+    ctx.fillStyle = '#6a5840';              // bright highlight above each slot
+    ctx.fillRect(-5, -32 + ro, 1, 1);
+    ctx.fillRect(-5, -28 + ro, 1, 1);
+    ctx.fillRect(-5, -24 + ro, 1, 1);
+
+    // ---- Orc glyph / scratch marks on barrel right side ----
+    ctx.fillStyle = '#6a5840';
+    ctx.fillRect( 3, -32 + ro, 1, 4);  // vertical stroke
+    ctx.fillRect( 2, -32 + ro, 2, 1);  // top horizontal tick
+    ctx.fillRect( 2, -29 + ro, 2, 1);  // mid horizontal tick
+    ctx.fillRect( 3, -26 + ro, 2, 1);  // bottom stroke
+
+    // ---- Barrel bore at tip — dark outer ring, bright centre ----
+    ctx.fillStyle = '#0a0806';              // very dark outer ring
+    ctx.fillRect(-2, -37 + ro, 4, 4);
+    ctx.fillStyle = '#2a2018';              // medium dark inner area
+    ctx.fillRect(-1, -36 + ro, 2, 2);
+    ctx.fillStyle = '#585040';              // faint glint at bore centre
+    ctx.fillRect(  0, -36 + ro, 1, 1);
+
+    // ---- Barrel tip indicator — 2×2 bright pixel at bore tip ----
+    // Shows exactly where the cannon is aimed at any sway angle.
+    // Moves with recoil so it tracks the actual bore position.
+    ctx.fillStyle = '#ffff44';
+    ctx.fillRect(-1, -37 + ro, 2, 2);
+
+    // ----------------------------------------------------------------
+    // VOIDHEART ORE POWER CELL — 10×10 px on right side of cannon body.
+    // In rotated context: cell top=y−18, bottom=y−8.
+    // Glow, windup rings, and white flash all rotate with the cannon.
     // ----------------------------------------------------------------
     let pr, pg, pb;
     if (this._state === 'windup') {
-      // High-contrast windup palette: deep purplish-red → bright white-pink
       pr = Math.round( 60 + glow * 195); // 60  → 255
       pg = Math.round(  0 + glow * 200); //  0  → 200
       pb = Math.round( 40 + glow * 215); // 40  → 255
     } else {
-      // idle / firing: subdued purplish-red range
       pr = Math.round(140 + glow * 115); // 140 → 255
       pg = Math.round( 10 + glow *  30); //  10 →  40
       pb = Math.round(120 + glow * 135); // 120 → 255
@@ -874,64 +952,59 @@ class OrcCannon {
     const cellColor = `rgb(${pr},${pg},${pb})`;
 
     // ---- Three-ring windup pulse ----
-    // Concentric 1px rings drawn outside the cell; outermost is brightest.
-    // Cell occupies (5+cx, -124, 10, 10). Ring offsets are 1/2/3 px out.
+    // Cell occupies (5, -18, 10, 10). Ring offsets are 1/2/3 px out.
     if (this._state === 'windup') {
-      // Ring 1 — 1px outside cell, dim purplish-pink
       ctx.globalAlpha = glow;
       ctx.fillStyle = '#8830a0';
-      ctx.fillRect( 4 + cx, -125, 12,  1); // top
-      ctx.fillRect( 4 + cx, -114, 12,  1); // bottom
-      ctx.fillRect( 4 + cx, -124,  1, 10); // left
-      ctx.fillRect(15 + cx, -124,  1, 10); // right
-      // Ring 2 — 2px outside cell, medium pink
+      ctx.fillRect( 4, -19, 12,  1); // ring 1 top
+      ctx.fillRect( 4,  -8, 12,  1); // ring 1 bottom
+      ctx.fillRect( 4, -18,  1, 10); // ring 1 left
+      ctx.fillRect(15, -18,  1, 10); // ring 1 right
       ctx.globalAlpha = glow * 0.9;
       ctx.fillStyle = '#c82890';
-      ctx.fillRect( 3 + cx, -126, 14,  1); // top
-      ctx.fillRect( 3 + cx, -113, 14,  1); // bottom
-      ctx.fillRect( 3 + cx, -125,  1, 12); // left
-      ctx.fillRect(16 + cx, -125,  1, 12); // right
-      // Ring 3 — 3px outside cell, brightest pink
+      ctx.fillRect( 3, -20, 14,  1); // ring 2 top
+      ctx.fillRect( 3,  -7, 14,  1); // ring 2 bottom
+      ctx.fillRect( 3, -19,  1, 12); // ring 2 left
+      ctx.fillRect(16, -19,  1, 12); // ring 2 right
       ctx.globalAlpha = glow * 0.8;
       ctx.fillStyle = '#ff60c0';
-      ctx.fillRect( 2 + cx, -127, 16,  1); // top
-      ctx.fillRect( 2 + cx, -112, 16,  1); // bottom
-      ctx.fillRect( 2 + cx, -126,  1, 14); // left
-      ctx.fillRect(17 + cx, -126,  1, 14); // right
+      ctx.fillRect( 2, -21, 16,  1); // ring 3 top
+      ctx.fillRect( 2,  -6, 16,  1); // ring 3 bottom
+      ctx.fillRect( 2, -20,  1, 14); // ring 3 left
+      ctx.fillRect(17, -20,  1, 14); // ring 3 right
       ctx.globalAlpha = 1.0;
     }
 
     // Cell 2px dark border background
     ctx.fillStyle = '#1a0820';
-    ctx.fillRect( 5 + cx, -124, 10, 10);
+    ctx.fillRect( 5, -18, 10, 10);
 
-    // Inner 6×6 bright core — carries the glow colour
+    // Inner 6×6 bright core
     ctx.fillStyle = cellColor;
-    ctx.fillRect( 7 + cx, -122, 6, 6);
+    ctx.fillRect( 7, -16, 6, 6);
 
-    // ---- Circuit line details — 1px L-shaped traces from two corners ----
+    // Circuit line details — 1px L-shaped traces from two corners
     ctx.fillStyle = '#9040b0';
-    // Top-right corner: horizontal right then vertical up
-    ctx.fillRect(15 + cx, -124, 2, 1);
-    ctx.fillRect(16 + cx, -127, 1, 4);
-    // Bottom-left corner: horizontal left then vertical down
-    ctx.fillRect( 3 + cx, -115, 2, 1);
-    ctx.fillRect( 3 + cx, -115, 1, 3);
+    ctx.fillRect(15, -18, 2, 1);    // TR corner: horizontal right
+    ctx.fillRect(16, -21, 1, 4);    // TR corner: vertical up
+    ctx.fillRect( 3,  -9, 2, 1);    // BL corner: horizontal left
+    ctx.fillRect( 3,  -9, 1, 3);    // BL corner: vertical down
 
     // Bright core sparkle — fades in from glow=0.5 to glow=1.0
     if (glow > 0.5) {
       ctx.globalAlpha = (glow - 0.5) * 2.0;
       ctx.fillStyle   = '#ffccff';
-      ctx.fillRect( 8 + cx, -121, 4, 4); // bright spot centred in 6×6 core
+      ctx.fillRect( 8, -15, 4, 4);  // bright spot centred in 6×6 core
       ctx.globalAlpha = 1.0;
     }
 
-    // ---- Two-frame white flash just before windup completes ----
-    // The power cell flares white at ≈0.717 s, signalling imminent fire
+    // Two-frame white flash just before windup completes
     if (this._state === 'windup' && this._windupTimer >= 0.75 - (2 / 60)) {
       ctx.fillStyle = '#ffffff';
-      ctx.fillRect( 5 + cx, -124, 10, 10);
+      ctx.fillRect( 5, -18, 10, 10);
     }
+
+    ctx.restore(); // end of swaying parts
   }
 
   // Draws the 4-frame pixel art explosion.
