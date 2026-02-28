@@ -33,6 +33,13 @@
   <script src="js/systems/InputSystem.js"></script>
 
   <!--
+    Entities — game object classes used by scenes.
+    Load after systems, before the scenes that instantiate them.
+  -->
+  <script src="js/entities/HealthSystem.js"></script>
+  <script src="js/entities/PlayerShip.js"></script>
+
+  <!--
     Phaser Scenes — load in dependency order before main.js.
     Each scene must be declared before any scene that transitions to it.
   -->

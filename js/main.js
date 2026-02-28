@@ -42,6 +42,15 @@ const config = {
     antialias:   false,
     antialiasGL: false,
   },
+
+  // Arcade physics — zero gravity; PlayerShip uses velocity + drag for flight
+  physics: {
+    default: 'arcade',
+    arcade: {
+      gravity: { y: 0 },
+      debug:   false,
+    },
+  },
 };
 
 window.game = new Phaser.Game(config);
