@@ -27,6 +27,12 @@
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
 
   <!--
+    Systems — shared helpers used by one or more scenes.
+    Must load before the scenes that depend on them.
+  -->
+  <script src="js/systems/InputSystem.js"></script>
+
+  <!--
     Phaser Scenes — load in dependency order before main.js.
     Each scene must be declared before any scene that transitions to it.
   -->
