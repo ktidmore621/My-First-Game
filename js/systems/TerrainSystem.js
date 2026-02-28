@@ -60,6 +60,41 @@ class TerrainSystem {
 
   getSeed() { return this._terrainSeed; }
 
+  // Returns world-space positions of all animated ground features.
+  // Call AFTER build().  Used by LightingSystem to position glow sources.
+  //
+  // Returns:
+  //   {
+  //     veins: [{ x, y }]  — Voidheart ore veins + large-crater ore glow
+  //     pools: [{ x, y }]  — Acid pool centres
+  //   }
+  getFeaturePositions() {
+    const horizonY = this._horizonY;
+    const groundH  = this._groundH;
+    const W        = this._battlefieldW;
+    const veins    = [];
+    const pools    = [];
+
+    for (let tileStart = 0; tileStart < W; tileStart += this._tileW) {
+      for (const f of this._groundFeatures) {
+        if (!f._animated) continue;
+        const worldX   = tileStart + f.x;
+        const tHeight  = this.getHeightAt(worldX);
+        const surfaceY = horizonY - tHeight;
+        const worldY   = surfaceY + f.y * groundH;
+
+        // Pools have a `rects` array; veins/ore features do not
+        if (f.rects) {
+          pools.push({ x: worldX, y: worldY });
+        } else {
+          veins.push({ x: worldX, y: worldY });
+        }
+      }
+    }
+
+    return { veins, pools };
+  }
+
   // Linear-interpolated terrain height at any world X.
   // Returns px above (positive) or below (negative) horizonY.
   // Safe to call outside [0, battlefieldW] — clamped to nearest edge.
