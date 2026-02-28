@@ -139,6 +139,9 @@ class PilotGameScene extends Phaser.Scene {
     this._ship = new PlayerShip(this, 120, H / 2, this._planeConf);
     this._ship.setDepth(10);
 
+    // Aim line — world-space red dashed line drawn from ship nose each frame
+    this._aimLineGfx = this.add.graphics().setDepth(9);
+
     // When the ship's HealthSystem hits zero it emits 'destroyed'
     this._ship.on('destroyed', () => this._triggerGameOver('defeated'));
 
@@ -184,6 +187,7 @@ class PilotGameScene extends Phaser.Scene {
     this._missionTime  = 30;   // seconds; placeholder mission length
     this._gameOver     = false;
     this._trauma       = 0;    // camera shake trauma value (0–1)
+    this._fireCooldown = 0;    // seconds until next shot is allowed
   }
 
   // ==========================================================
@@ -221,11 +225,16 @@ class PilotGameScene extends Phaser.Scene {
     });
 
     // Ship movement + effects
-    this._ship.update(this._input);
+    this._ship.update(this._input, dt);
 
     // ---- FIRE player bolt ----
-    if (this._input.firePressed) {
+    // Right stick deflection > 0.1 triggers continuous fire (rate-limited);
+    // the FIRE button also fires on each press.
+    this._fireCooldown = Math.max(0, this._fireCooldown - dt);
+    const aimMag = Math.hypot(this._input.rightStick.x, this._input.rightStick.y);
+    if ((aimMag > 0.1 || this._input.firePressed) && this._fireCooldown <= 0) {
       this._firePlayerBolt();
+      this._fireCooldown = 0.15;
     }
 
     // Update all enemies (OrcCannons + OrcSilos via EnemyManager)
@@ -259,26 +268,37 @@ class PilotGameScene extends Phaser.Scene {
     const bolt = this.playerBolts.get();
     if (!bolt) return; // pool full — shot dropped
 
-    // Fire rightward from the ship's nose at BOLT_SPEED px/s
-    const angle = 0; // pointing right
-    bolt.fire(
-      this._ship.x + 34,  // nose tip: ship origin + half-width
-      this._ship.y,
-      BOLT_SPEED,
-      0,
-      BOLT_DAMAGE,
-      this._planeConf.color,
-      angle
-    );
+    // Determine aim direction: right stick if deflected, else ship velocity direction
+    const aim    = this._input.rightStick;
+    const aimMag = Math.hypot(aim.x, aim.y);
+    let angle;
+    if (aimMag > 0.1) {
+      angle = Math.atan2(aim.y, aim.x);
+    } else {
+      const vx  = this._ship.body.velocity.x;
+      const vy  = this._ship.body.velocity.y;
+      const spd = Math.sqrt(vx * vx + vy * vy);
+      angle = spd > 15 ? Math.atan2(vy, vx) : 0;
+    }
+
+    const bvx = Math.cos(angle) * BOLT_SPEED;
+    const bvy = Math.sin(angle) * BOLT_SPEED;
+
+    // Spawn bolt at the ship's rotated nose tip (half-width = 32 px)
+    const shipRad = Phaser.Math.DegToRad(this._ship.angle);
+    const noseX   = this._ship.x + Math.cos(shipRad) * 32;
+    const noseY   = this._ship.y + Math.sin(shipRad) * 32;
+
+    bolt.fire(noseX, noseY, bvx, bvy, BOLT_DAMAGE, this._planeConf.color, angle);
 
     // ---- Muzzle flash — particle burst at the bolt spawn point ----
     if (this._muzzleEmitter) {
-      this._muzzleEmitter.setPosition(this._ship.x + 34, this._ship.y);
+      this._muzzleEmitter.setPosition(noseX, noseY);
       this._muzzleEmitter.explode(6);
     }
 
     // Muzzle light bloom
-    this._lighting.addMuzzleFlash(this._ship.x + 34, this._ship.y);
+    this._lighting.addMuzzleFlash(noseX, noseY);
     this._sound.fireWeapon();
   }
 
@@ -637,6 +657,50 @@ class PilotGameScene extends Phaser.Scene {
     const mins = Math.floor(remaining / 60);
     const secs = remaining % 60;
     this._hudTimer.setText(`${mins}:${secs.toString().padStart(2, '0')}`);
+
+    // ---- Aim line — red dashed line from ship nose in aim direction ----
+    // World-space so it scrolls with the camera and sits just below the ship.
+    if (!this._aimLineGfx) return;
+    this._aimLineGfx.clear();
+
+    const aim    = this._input.rightStick;
+    const aMag   = Math.hypot(aim.x, aim.y);
+    let aimAngle;
+    if (aMag > 0.1) {
+      aimAngle = Math.atan2(aim.y, aim.x);
+    } else {
+      const vx  = this._ship.body.velocity.x;
+      const vy  = this._ship.body.velocity.y;
+      const spd = Math.sqrt(vx * vx + vy * vy);
+      aimAngle = spd > 15 ? Math.atan2(vy, vx) : 0;
+    }
+
+    const shipRad = Phaser.Math.DegToRad(this._ship.angle);
+    const noseX   = this._ship.x + Math.cos(shipRad) * 32;
+    const noseY   = this._ship.y + Math.sin(shipRad) * 32;
+
+    // Draw dashed line: 8px dash / 5px gap, 120px total
+    const DASH  = 8;
+    const GAP   = 5;
+    const TOTAL = 120;
+    this._aimLineGfx.lineStyle(1, 0xff2222, 0.85);
+    let d = 0;
+    let drawSeg = true;
+    while (d < TOTAL) {
+      const segLen = Math.min(drawSeg ? DASH : GAP, TOTAL - d);
+      if (drawSeg) {
+        const x1 = noseX + Math.cos(aimAngle) * d;
+        const y1 = noseY + Math.sin(aimAngle) * d;
+        const x2 = noseX + Math.cos(aimAngle) * (d + segLen);
+        const y2 = noseY + Math.sin(aimAngle) * (d + segLen);
+        this._aimLineGfx.beginPath();
+        this._aimLineGfx.moveTo(x1, y1);
+        this._aimLineGfx.lineTo(x2, y2);
+        this._aimLineGfx.strokePath();
+      }
+      d += segLen;
+      drawSeg = !drawSeg;
+    }
   }
 
   // ==========================================================
@@ -735,6 +799,10 @@ class PilotGameScene extends Phaser.Scene {
     if (this._lighting) {
       this._lighting.destroy();
       this._lighting = null;
+    }
+    if (this._aimLineGfx) {
+      this._aimLineGfx.destroy();
+      this._aimLineGfx = null;
     }
   }
 

@@ -24,6 +24,9 @@
      color           hex    → 0x42a5f5, etc.
    ============================================================ */
 
+// Increase for snappier acceleration response, decrease for heavier feel
+const ACCEL_FACTOR = 6.0;
+
 class PlayerShip extends Phaser.GameObjects.Graphics {
 
   constructor(scene, x, y, planeConfig = {}) {
@@ -248,20 +251,33 @@ class PlayerShip extends Phaser.GameObjects.Graphics {
   // UPDATE — call once per frame from the scene's update()
   // ================================================================
 
-  update(inputSys) {
+  update(inputSys, dt) {
     const stick    = inputSys.leftStick;
     const maxSpeed = this._maxSpeed;
 
-    // Drive velocity from left stick; built-in drag decelerates when stick released
-    if (stick.active) {
-      this.body.setVelocity(
-        stick.x * maxSpeed,
-        stick.y * maxSpeed
-      );
-    }
+    // Lerp velocity toward stick target for a gradual acceleration ramp.
+    // When stick is released (x/y = 0) the lerp decelerates toward zero;
+    // the body drag reinforces the stop.
+    const targetVX = stick.x * maxSpeed;
+    const targetVY = stick.y * maxSpeed;
+    this.body.setVelocityX(
+      Phaser.Math.Linear(this.body.velocity.x, targetVX, ACCEL_FACTOR * dt)
+    );
+    this.body.setVelocityY(
+      Phaser.Math.Linear(this.body.velocity.y, targetVY, ACCEL_FACTOR * dt)
+    );
 
-    // Tilt the ship based on horizontal velocity — reads as natural banking
-    this.angle = (this.body.velocity.x / maxSpeed) * 15;
+    // Rotate nose to face direction of travel; smoothly returns to level when stopped.
+    // 0.12 = rotation follow speed — increase for snappier nose response
+    const vx    = this.body.velocity.x;
+    const vy    = this.body.velocity.y;
+    const speed = Math.sqrt(vx * vx + vy * vy);
+    if (speed > 20) {
+      const targetAngle = Math.atan2(vy, vx) * (180 / Math.PI);
+      this.angle = Phaser.Math.Linear(this.angle, targetAngle, 0.12);
+    } else {
+      this.angle = Phaser.Math.Linear(this.angle, 0, 0.08);
+    }
 
     // Redraw ship geometry every frame (Graphics has no sprite caching)
     this._draw();
