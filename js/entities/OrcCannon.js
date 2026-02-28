@@ -59,10 +59,13 @@
 
 class OrcCannon extends Phaser.GameObjects.Graphics {
 
-  // scene    : the Phaser.Scene that owns this object
-  // worldX   : world-space X centre of the structure
-  // groundY  : screen-space Y of the ground surface (constant; camera.scrollY = 0)
-  constructor(scene, worldX, groundY) {
+  // scene     : the Phaser.Scene that owns this object
+  // worldX    : world-space X centre of the structure
+  // groundY   : screen-space Y of the ground surface (constant; camera.scrollY = 0)
+  // boltGroup : Phaser.GameObjects.Group of Projectile instances — cannon fires into
+  //             this shared pool instead of managing its own plain-object array.
+  //             Pass null if you don't need arcade-physics bolts (e.g. in tests).
+  constructor(scene, worldX, groundY, boltGroup = null) {
     super(scene);
 
     // Store scene reference for camera shake and timer access
@@ -78,6 +81,17 @@ class OrcCannon extends Phaser.GameObjects.Graphics {
     scene.add.existing(this);
     this.setDepth(5); // below PlayerShip (depth 10), above ground (depth 1)
 
+    // ---- Arcade physics static body for player-bolt overlap detection ----
+    // Dimensions match getStructureHitbox(): 56 px wide, 150 px tall.
+    // offset(-28, -150) places the top-left at (worldX-28, groundY-150).
+    scene.physics.add.existing(this, true);   // true = static body
+    this.body.setSize(56, 150);
+    this.body.setOffset(-28, -150);
+
+    // ---- Shared bolt group (Phaser pool replacing internal _bolts array) ----
+    // group.get() acquires an inactive Projectile slot and group.kill() returns it.
+    this._boltGroup = boltGroup;
+
     // ---- Health: 6 hit points — destroyed by 6 direct PX-9 hits ----
     this.health    = new HealthSystem(6);
     this._hitCount = 0; // 0→1→…→5 as hits land; drives progressive damage render
@@ -87,14 +101,6 @@ class OrcCannon extends Phaser.GameObjects.Graphics {
     this._windupTimer  = 0;       // accumulates 0→0.75s during windup phase
     this._fireCooldown = 0;       // counts down 1.5→0s between shots in firing
     this._pulseT       = 0;       // ever-incrementing time for glow oscillation
-
-    // ---- Outgoing plasma bolts — small pool, max 5 in-flight ----
-    // Each slot: { active, worldX, y, originWorldX, originY, velocityX, velocityY }
-    // worldX is world-space (may drift with sway angle).
-    // y and velocityY are screen-space; originWorldX/originY record launch for culling.
-    this._bolts = Array.from({ length: 5 }, () => ({
-      active: false, worldX: 0, y: 0, originWorldX: 0, originY: 0, velocityX: 0, velocityY: 0,
-    }));
 
     // ---- Damage-state rendering flags ----
     this._crackVisible = false; // drawn on left strut after hit 2
@@ -138,6 +144,8 @@ class OrcCannon extends Phaser.GameObjects.Graphics {
       this._dying      = true;
       this._deathTimer = 0;
       this._spawnDebris();
+      // Disable physics body so player bolts no longer overlap this structure
+      if (this.body) this.body.enable = false;
     });
   }
 
@@ -187,17 +195,8 @@ class OrcCannon extends Phaser.GameObjects.Graphics {
       this._recoilOffset = 0;
     }
 
-    // ---- Advance in-flight bolts; cull any that have traveled too far ----
-    this._bolts.forEach(b => {
-      if (!b.active) return;
-      b.worldX += b.velocityX * dt;
-      b.y      += b.velocityY * dt;
-      // Deactivate after 600px of travel — bolts may fly at an angle,
-      // so cull on 2D distance rather than Y axis alone.
-      if (Math.hypot(b.worldX - b.originWorldX, b.y - b.originY) > 600) {
-        b.active = false;
-      }
-    });
+    // Bolt movement and culling are handled by Phaser's physics world
+    // via Projectile.preUpdate() (runChildUpdate: true on the bolt group).
 
     // ---- Detection range: 400 horizontal world-space pixels ----
     // Measured on the X axis only — the cannon fires upward toward whatever
@@ -296,8 +295,8 @@ class OrcCannon extends Phaser.GameObjects.Graphics {
     if (this._dying) {
       this._renderExplosion(ctx);
       ctx.restore();
-      // Bolts continue flying after structure dies — draw in screen space
-      this._renderBolts(ctx, camera.scrollX);
+      // Bolt visuals continue after structure dies — handled by the Phaser
+      // Projectile group (runChildUpdate keeps active bolts alive and drawn).
       return;
     }
 
@@ -318,10 +317,7 @@ class OrcCannon extends Phaser.GameObjects.Graphics {
 
     this._renderStructure(ctx, glow);
     ctx.restore();
-
-    // Enemy bolts render in screen space — after ctx.restore() so they
-    // are not affected by the per-structure translate
-    this._renderBolts(ctx, camera.scrollX);
+    // Bolt rendering handled by Phaser Projectile group (no manual _renderBolts call needed).
   }
 
   // ================================================================
@@ -341,45 +337,24 @@ class OrcCannon extends Phaser.GameObjects.Graphics {
     };
   }
 
-  // Tests all active bolts against a rectangular player hitbox.
-  // The hitbox is deliberately SMALLER than the visual ship size so hits
-  // feel fair — bullets that clip the wing don't count.
-  // Returns true on the first impact; that bolt is deactivated (consumed).
-  //
-  // playerWorldX, playerY : centre of player hitbox in world/screen space
-  // hitW, hitH            : full width and height of the hitbox
-  checkBoltsHitPlayer(playerWorldX, playerY, hitW, hitH) {
-    const px = playerWorldX - hitW / 2; // left edge of player hitbox
-    const py = playerY      - hitH / 2; // top edge of player hitbox
-
-    for (const b of this._bolts) {
-      if (!b.active) continue;
-      // Bolt AABB: 6×6 px centred on bolt position
-      const bx = b.worldX - 3;
-      const by = b.y      - 3;
-      if (bx < px + hitW && bx + 6 > px &&
-          by < py + hitH && by + 6 > py) {
-        b.active = false; // bolt consumed on impact
-        return true;
-      }
-    }
-    return false;
-  }
+  // checkBoltsHitPlayer removed — replaced by Phaser arcade overlap in PilotGameScene:
+  //   this.physics.add.overlap(enemyBolts, playerShip, onEnemyBoltHitPlayer)
 
   // ================================================================
   // PRIVATE — FIRING
   // ================================================================
 
-  // Acquire an inactive bolt slot and fire it in the direction of the current
-  // sway angle. Shots during a wide sway arc left or right — the player must
-  // watch the barrel to predict incoming fire.
+  // Acquire a Projectile orb from the shared bolt group and fire it in the
+  // direction of the current sway angle. Shots during a wide sway arc left
+  // or right — the player must watch the barrel to predict incoming fire.
   //
-  // FIX 3: firing direction matches live swayAngle at moment of shot.
   //   velocityX = sin(fireAngle) * SPEED
   //   velocityY = -cos(fireAngle) * SPEED
   _fireBolt(targetWorldX, targetY) { // eslint-disable-line no-unused-vars
-    const b = this._bolts.find(b => !b.active);
-    if (!b) return; // all 5 slots in-flight — shot dropped silently
+    if (!this._boltGroup) return; // group not wired — shot dropped silently
+
+    const bolt = this._boltGroup.get();
+    if (!bolt) return; // pool exhausted — shot dropped silently
 
     const SPEED = 300; // world-space px/s
 
@@ -392,18 +367,15 @@ class OrcCannon extends Phaser.GameObjects.Graphics {
     const tipWorldX = this.x + Math.sin(fireAngleRad) * BARREL_TIP_DIST;
     const tipY      = this.y - 108 - Math.cos(fireAngleRad) * BARREL_TIP_DIST;
 
-    b.active       = true;
-    b.worldX       = tipWorldX;
-    b.y            = tipY;
-    b.originWorldX = tipWorldX; // for 2D travel-distance cull
-    b.originY      = tipY;
-    b.velocityX    = Math.sin(fireAngleRad) * SPEED;   // horizontal spread from sway
-    b.velocityY    = -Math.cos(fireAngleRad) * SPEED;  // upward in screen space
+    const vx = Math.sin(fireAngleRad) * SPEED;   // horizontal spread from sway
+    const vy = -Math.cos(fireAngleRad) * SPEED;  // upward in screen space
+
+    bolt.fireOrb(tipWorldX, tipY, vx, vy, 1, 0xff40ff);
 
     // Trigger 3-frame recoil animation
     this._recoilTimer = 3 / 60;
 
-    // Phaser camera shake — subtle ground-impact feel on every shot
+    // Subtle camera shake on every shot — ground-impact feel
     this._scene.cameras.main.shake(100, 0.005);
   }
 
@@ -1117,23 +1089,6 @@ class OrcCannon extends Phaser.GameObjects.Graphics {
     }
   }
 
-  // Draws all active plasma bolts in screen space.
-  // Called after ctx.restore() so bolts are not affected by the
-  // per-structure translate used by _renderStructure.
-  // cameraScrollX : camera.scrollX from the active Phaser camera
-  _renderBolts(ctx, cameraScrollX) {
-    this._bolts.forEach(b => {
-      if (!b.active) return;
-      const sx = Math.round(b.worldX - cameraScrollX);
-      const sy = Math.round(b.y);
-
-      // 6×6 px purplish-red outer bolt — visually distinct from IPDF plasma
-      ctx.fillStyle = '#b01490';
-      ctx.fillRect(sx - 3, sy - 3, 6, 6);
-
-      // 2×2 px bright pink center — instantly readable as enemy fire
-      ctx.fillStyle = '#ff80ff';
-      ctx.fillRect(sx - 1, sy - 1, 2, 2);
-    });
-  }
+  // _renderBolts removed — Projectile.preUpdate() handles bolt rendering
+  // via Phaser's display list (the bolt group uses runChildUpdate: true).
 }

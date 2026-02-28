@@ -114,10 +114,14 @@ const MISSILE_DAMAGE_HITBOX_H = 21;  // missile vs player: height
 
 class OrcSilo extends Phaser.GameObjects.Graphics {
 
-  // scene    : the Phaser.Scene that owns this object
-  // worldX   : world-space X centre of the structure
-  // groundY  : screen-space Y of the ground surface (constant; camera.scrollY = 0)
-  constructor(scene, worldX, groundY) {
+  // scene        : the Phaser.Scene that owns this object
+  // worldX       : world-space X centre of the structure
+  // groundY      : screen-space Y of the ground surface (constant; camera.scrollY = 0)
+  // missileGroup : Phaser.GameObjects.Group of Projectile instances used as
+  //               physics proxies for arcade overlap on homing missiles.
+  //               OrcSilo keeps its own homing + rendering logic; this group
+  //               provides the physics bodies needed for collision callbacks.
+  constructor(scene, worldX, groundY, missileGroup = null) {
     super(scene);
 
     // Store scene reference for Phaser API calls
@@ -132,6 +136,18 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
     // Register with scene display list
     scene.add.existing(this);
     this.setDepth(5); // below PlayerShip (depth 10), above ground (depth 1)
+
+    // ---- Arcade physics static body for player-bolt overlap detection ----
+    // Covers the full 120 × 28 px above-ground structure.
+    // offset(-60, -28) aligns the body top-left to (worldX-60, groundY-28).
+    scene.physics.add.existing(this, true);   // true = static body
+    this.body.setSize(120, 28);
+    this.body.setOffset(-60, -28);
+
+    // ---- Shared missile group (Phaser physics proxies for collision) ----
+    // OrcSilo fires invisible Projectile proxies into this group and keeps
+    // their physics bodies positioned to match missile world positions.
+    this._missileGroup = missileGroup;
 
     // ---- Health: 10 hit points ----
     this.health    = new HealthSystem(10);
@@ -175,16 +191,19 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
     this._lastPlayerY      = groundY - 150; // reasonable default until first frame
 
     // ---- Outgoing missiles — pool of 2 in-flight ----
-    // Each slot: { active, worldX, y, originY, heading, age, velocityX, velocityY, hits, hitFlashTimer }
+    // Each slot: { active, worldX, y, originY, heading, age, velocityX, velocityY, hits, hitFlashTimer, phaserProxy }
     // worldX/heading are world-space; heading in radians (-π/2 = pointing up); age in seconds.
     // hits: damage taken from player projectiles (6 = destroyed mid-air).
     // hitFlashTimer: counts down from 2/60 s to 0 — draws a white flash overlay.
+    // phaserProxy: Projectile instance used as an invisible arcade physics body for
+    //             overlap detection; null when missile is inactive.
     // Pool size = max concurrent missiles. Increase for higher difficulty levels
     this._missiles = Array.from({ length: 2 }, () => ({
       active: false, worldX: 0, y: 0, originY: 0,
       heading: -Math.PI / 2, age: 0,
       velocityX: 0, velocityY: 0,
       hits: 0, hitFlashTimer: 0,
+      phaserProxy: null,
     }));
 
     // ---- Mid-air missile explosions — spawned when a missile is shot down ----
@@ -253,6 +272,8 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
       // Clean up beacon timers — silo is gone
       this._beaconTimers.forEach(t => scene.time.removeEvent(t));
       this._beaconTimers = [];
+      // Disable structure physics body so player bolts stop overlapping it
+      if (this.body) this.body.enable = false;
     });
   }
 
@@ -335,7 +356,13 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
       );
 
       // Deactivate after max flight time or if well off-screen vertically
-      if (m.age > MISSILE_TRACKING_DURATION * 3 || m.y < -200) m.active = false;
+      if (m.age > MISSILE_TRACKING_DURATION * 3 || m.y < -200) {
+        m.active = false;
+        if (m.phaserProxy) { m.phaserProxy.kill(); m.phaserProxy = null; }
+      } else if (m.phaserProxy) {
+        // Sync the invisible physics proxy to keep arcade overlap in the right place
+        m.phaserProxy.syncProxy(m.worldX, m.y);
+      }
     });
 
     // ---- Detection: silo enters the visible camera viewport (right edge + 100 px buffer) ----
@@ -520,64 +547,55 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
     };
   }
 
-  // Tests all active missiles against a rectangular player hitbox.
-  // Returns true on the first impact; that missile is deactivated.
-  //
-  // playerWorldX, playerY : centre of player hitbox in world/screen space
-  // hitW, hitH            : full width and height of the hitbox
-  checkMissilesHitPlayer(playerWorldX, playerY, hitW, hitH) {
-    const px = playerWorldX - hitW / 2;
-    const py = playerY      - hitH / 2;
+  // checkMissilesHitPlayer removed — replaced by Phaser arcade overlap in PilotGameScene:
+  //   this.physics.add.overlap(missiles, playerShip, onMissileHitPlayer)
+  // The physics proxy stored in m.phaserProxy (synced to m.worldX/y each frame)
+  // is what the overlap detects.
 
-    for (const m of this._missiles) {
-      if (!m.active) continue;
-      // Missile damage AABB: MISSILE_DAMAGE_HITBOX_W × MISSILE_DAMAGE_HITBOX_H (10×21 px),
-      // centred on missile world position — kept tight for fairness against the player.
-      const mx = m.worldX - MISSILE_DAMAGE_HITBOX_W / 2;
-      const my = m.y      - MISSILE_DAMAGE_HITBOX_H / 2;
-      if (mx < px + hitW && mx + MISSILE_DAMAGE_HITBOX_W > px &&
-          my < py + hitH && my + MISSILE_DAMAGE_HITBOX_H > py) {
-        // Impact explosion — triggered on missile-to-player collision
-        this._spawnImpactExplosion(m.worldX, m.y);
-        m.active = false; // missile consumed on impact
-        return true;
-      }
-    }
-    return false;
+  // checkProjectilesHitMissiles removed — replaced by Phaser arcade overlap pair 5 in
+  // PilotGameScene:
+  //   this.physics.add.overlap(playerBolts, missiles, onBoltInterceptMissile)
+  // The overlap callback calls hitMissileProxy(proxy) below.
+
+  // ----------------------------------------------------------------
+  // detonateMissileProxy — called by PilotGameScene when a missile proxy
+  // overlaps the player ship (arcade overlap pair 4).
+  //
+  // Triggers the impact explosion visual at the missile's last position
+  // and deactivates both the internal slot and the physics proxy.
+  // ----------------------------------------------------------------
+  detonateMissileProxy(proxy) {
+    const m = this._missiles.find(ms => ms.phaserProxy === proxy);
+    if (!m || !m.active) return;
+    this._spawnImpactExplosion(m.worldX, m.y);
+    m.active = false;
+    if (m.phaserProxy) { m.phaserProxy.kill(); m.phaserProxy = null; }
   }
 
-  // Tests all active player projectiles against all active missiles.
-  // Called from PilotGameState each frame (after projectile-vs-structure checks).
+  // ----------------------------------------------------------------
+  // hitMissileProxy — called by PilotGameScene when a player bolt
+  // overlaps an in-flight missile proxy (arcade overlap pair 5).
   //
-  // projectilePool : the full Projectile pool from PilotGameState
-  //   Each entry has: .active (bool), .worldX (world-space), .y (screen-space),
-  //                   .deactivate() method.
+  // proxy  : the Projectile proxy that was overlapped
   //
-  // Shoot hitbox: MISSILE_SHOOT_HITBOX_W × MISSILE_SHOOT_HITBOX_H (20×32 px) centred on
-  // missile world position — forgiveness box makes player interception feel fair.
-  // 6 hits destroy the missile (mid-air explosion + deactivate).
-  // Each hit triggers a 2-frame white flash overlay on the sprite.
-  checkProjectilesHitMissiles(projectilePool) {
-    this._missiles.forEach(m => {
-      if (!m.active) return;
-      // 20 × 32 forgiveness AABB centred on (m.worldX, m.y)
-      const ml = m.worldX - MISSILE_SHOOT_HITBOX_W / 2;  // left edge
-      const mr = m.worldX + MISSILE_SHOOT_HITBOX_W / 2;  // right edge
-      const mt = m.y      - MISSILE_SHOOT_HITBOX_H / 2;  // top edge
-      const mb = m.y      + MISSILE_SHOOT_HITBOX_H / 2;  // bottom edge
-      projectilePool.forEach(p => {
-        if (!p.active) return;
-        if (p.worldX > ml && p.worldX < mr && p.y > mt && p.y < mb) {
-          m.hits++;
-          m.hitFlashTimer = 2 / 60; // 2-frame white-fill flash
-          p.deactivate();
-          if (m.hits >= 6) {
-            this._spawnMidairExplosion(m.worldX, m.y);
-            m.active = false;
-          }
-        }
-      });
-    });
+  // Applies one hit to the missile slot that owns this proxy.
+  // 6 hits destroy the missile with a mid-air explosion.
+  // Returns the missile worldX/y so the scene can spawn a particle burst.
+  // ----------------------------------------------------------------
+  hitMissileProxy(proxy) {
+    const m = this._missiles.find(ms => ms.phaserProxy === proxy);
+    if (!m || !m.active) return null;
+
+    m.hits++;
+    m.hitFlashTimer = 2 / 60; // 2-frame white-fill flash overlay
+    if (m.hits >= 6) {
+      const pos = { x: m.worldX, y: m.y };
+      this._spawnMidairExplosion(m.worldX, m.y);
+      m.active = false;
+      if (m.phaserProxy) { m.phaserProxy.kill(); m.phaserProxy = null; }
+      return pos; // caller uses this to place a Phaser particle burst
+    }
+    return null;
   }
 
   // ================================================================
@@ -607,6 +625,18 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
     m.velocityY     = -MISSILE_SPEED;
     m.hits          = 0;
     m.hitFlashTimer = 0;
+
+    // Activate an invisible physics proxy for arcade overlap detection.
+    // MISSILE_DAMAGE_HITBOX_W/H are the tight hitbox constants at the top of this file.
+    if (this._missileGroup) {
+      const proxy = this._missileGroup.get();
+      if (proxy) {
+        proxy.activateProxy(tipWorldX, tipY, MISSILE_DAMAGE_HITBOX_W, MISSILE_DAMAGE_HITBOX_H);
+        // Back-reference so the overlap callback can find this silo from the proxy
+        proxy._missileOwner = this;
+        m.phaserProxy = proxy;
+      }
+    }
 
     // Spawn rising smoke column at the silo opening
     this._spawnLaunchSmoke();
@@ -812,7 +842,7 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
 
   // Activates the next free slot in the pre-allocated pool of 3.
   // Resets all particle positions and velocities from hardcoded config.
-  // Called from checkMissilesHitPlayer when a missile reaches the player.
+  // Called from detonateMissileProxy when a missile reaches the player.
   _spawnImpactExplosion(worldX, y) {
     const slot = this._impactExplosions.find(e => !e.active);
     if (!slot) return;   // pool exhausted — effect dropped silently
