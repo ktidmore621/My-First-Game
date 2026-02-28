@@ -235,9 +235,7 @@ class PilotGameScene extends Phaser.Scene {
     if ((aimMag > 0.1 || this._input.firePressed) && this._fireCooldown <= 0) {
       this._firePlayerBolt();
       this._fireCooldown = 0.15;
-      // Tint flash confirms firing — remove before release
-      this._ship.setTint(0xffffff);
-      this.time.delayedCall(50, () => { if (this._ship) this._ship.clearTint(); });
+      this._ship._fireFeedbackFrame = true;
     }
 
     // Update all enemies (OrcCannons + OrcSilos via EnemyManager)
