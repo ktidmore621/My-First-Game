@@ -114,21 +114,21 @@ class PilotGameScene extends Phaser.Scene {
     // each active Projectile's preUpdate() is called automatically each frame.
 
     // Player's PX-9 plasma bolts — IPDF elongated bolt sprite
-    this.playerBolts = this.add.group({
+    this.playerBolts = this.physics.add.group({
       classType:       Projectile,
       maxSize:         30,
       runChildUpdate:  true,
     });
 
     // OrcCannon orc plasma orbs — 6×6 magenta square sprite
-    this.enemyBolts = this.add.group({
+    this.enemyBolts = this.physics.add.group({
       classType:       Projectile,
       maxSize:         50,   // 10 cannons × 5 bolts each
       runChildUpdate:  true,
     });
 
     // OrcSilo missile physics proxies — invisible bodies for overlap only
-    this.missiles = this.add.group({
+    this.missiles = this.physics.add.group({
       classType:       Projectile,
       maxSize:         8,    // 4 silos × 2 missiles each
       runChildUpdate:  true,
