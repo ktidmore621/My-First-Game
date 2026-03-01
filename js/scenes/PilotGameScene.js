@@ -425,6 +425,7 @@ class PilotGameScene extends Phaser.Scene {
 
   // Pair 3 — enemy bolt hits player ship
   _onEnemyBoltHitPlayer(bolt, ship) {
+    if (!this._ship || !this._ship.health.isAlive()) return;
     if (ship._invincible) return; // spawn invincibility still active
 
     bolt.kill();

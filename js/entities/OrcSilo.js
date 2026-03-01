@@ -142,6 +142,7 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
     scene.physics.add.existing(this, true);   // true = static body
     this.body.setSize(120, 180); // Hitbox covers full structure height — 180px from ground up to top of rim and fence
     this.body.setOffset(-60, -180);
+    this.body.updateFromGameObject();
 
     // ---- Shared missile group (Phaser physics proxies for collision) ----
     // OrcSilo fires invisible Projectile proxies into this group and keeps
