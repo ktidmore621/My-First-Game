@@ -9,7 +9,7 @@
      - Slow parallax star field updated each frame
      - Radial vignette overlay (canvas-texture approach)
      - Title + glowing underline (pulse tween)
-     - PILOT MODE button   → PlaneSelectScene
+     - PILOT MODE button   → PilotGameScene (bypasses PlaneSelectScene)
      - GUNNER MODE button  → PilotGameScene  (mode: 'gunner')
      - Footer hint + version tag
 
@@ -134,7 +134,21 @@ class MainMenuScene extends Phaser.Scene {
     // ---- PILOT MODE button ----
     const pilotBtn = this._makeButton(W / 2, 217, 400, 65, 'PILOT MODE', 0x0d47a1, 0x42a5f5);
     pilotBtn.on('pointerdown', () => {
-      this.scene.start('PlaneSelectScene', { mode: 'pilot' });
+      this.cameras.main.flash(300, 255, 255, 255);
+      this.time.delayedCall(300, () => {
+        this.scene.start('PilotGameScene', {
+          mode: 'pilot',
+          plane: {
+            id: 'fighter',
+            name: 'Strikewing',
+            color: 0x00aaff,
+            speed: 160,
+            durability: 100,
+            weaponSize: 1,
+            maneuverability: 2
+          }
+        });
+      });
     });
 
     // ---- GUNNER MODE button ----
