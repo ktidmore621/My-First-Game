@@ -25,9 +25,9 @@ const config = {
 
   // Register scenes in start order — first in the array is launched first
   scene: [
+    PilotGameScene,
     MainMenuScene,
     PlaneSelectScene,
-    PilotGameScene,
     GameOverScene,
   ],
 
