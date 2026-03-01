@@ -13,7 +13,7 @@
      - Projectile     → Phaser.GameObjects.Graphics + arcade physics;
                         pooled in three groups (player/enemy/missile)
      - EnemyManager   → OrcCannon + OrcSilo battlefield population
-     - Arcade physics overlaps → 5 collision pairs (see _setupCollision)
+     - Collision → 3 arcade overlaps + manual bolt-vs-enemy checks
 
    World layout:
      - World width:  BATTLEFIELD_W (4800 px), height: 540 px
@@ -22,12 +22,12 @@
      - Camera:       follows PlayerShip with 0.1 lag; bounds clamped to world
      - HUD:          health bar + countdown timer, setScrollFactor(0) — fixed
 
-   Collision pairs (all via physics.add.overlap):
-     1. playerBolts  → orcCannons   → camera shake 150ms
-     2. playerBolts  → orcSilos     → camera shake 150ms
-     3. enemyBolts   → playerShip   → screen flash red
-     4. missiles     → playerShip   → screen flash red + impact explosion
-     5. playerBolts  → missiles     → particle burst at intercept point
+   Collision pairs:
+     1. playerBolts  → orcCannons   → manual AABB (camera shake)
+     2. playerBolts  → orcSilos     → manual AABB (camera shake)
+     3. enemyBolts   → playerShip   → physics.add.overlap (screen flash red)
+     4. missiles     → playerShip   → physics.add.overlap (flash + explosion)
+     5. playerBolts  → missiles     → physics.add.overlap (intercept burst)
 
    Game-over conditions (placeholder):
      - Ship health → 0       → 800 ms delay → back to MainMenuScene
@@ -55,7 +55,6 @@ class PilotGameScene extends Phaser.Scene {
 
   constructor() {
     super({ key: 'PilotGameScene' });
-    this._diagnosticMode = false;
   }
 
   // ==========================================================
@@ -72,113 +71,9 @@ class PilotGameScene extends Phaser.Scene {
   }
 
   // ==========================================================
-  // CREATE — DIAGNOSTIC MODE (step-by-step system bring-up)
+  // CREATE
   // ==========================================================
 
-  create(data) {
-    // vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-    // DIAGNOSTIC: Tests each subsystem one at a time to isolate
-    // the crash.  If the screen goes black, the last green
-    // "STEP N OK" that appeared identifies the system BEFORE the
-    // crash.  Original create() body preserved as block comment.
-    // vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-
-    this._diagnosticMode = true;
-
-    const W = 960, H = 540;
-    let stepY = 80;
-
-    const addOK = (n) => {
-      this.add.text(480, stepY, 'STEP ' + n + ' OK', {
-        fontSize: '24px', fill: '#00ff00'
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(999);
-      stepY += 40;
-    };
-    const addFail = (n, msg) => {
-      this.add.text(480, stepY, 'STEP ' + n + ' FAIL: ' + msg, {
-        fontSize: '14px', fill: '#ff4444',
-        wordWrap: { width: 860 }
-      }).setOrigin(0.5).setScrollFactor(0).setDepth(999);
-      stepY += 50;
-    };
-
-    // ---- STEP 1: Bare scene rendering ----
-    this.add.rectangle(480, 270, 960, 540, 0x071020)
-      .setScrollFactor(0);
-    this.add.text(480, 40, 'PilotGameScene DIAGNOSTIC', {
-      fontSize: '18px', fill: '#aaaaaa'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(999);
-    addOK(1);
-
-    // ---- STEP 2: TerrainSystem ----
-    try {
-      this.physics.world.setBounds(0, 0, BATTLEFIELD_W, H);
-      this._buildSky(W, H);
-      this._terrain = new TerrainSystem(this, BATTLEFIELD_W);
-      ENEMY_CANNON_XS.forEach(x =>
-        this._terrain.flattenZone(x + CANNON_FOOTPRINT / 2, CANNON_FLAT_HALF, TERRAIN_BLEND_W)
-      );
-      ENEMY_SILO_XS.forEach(x =>
-        this._terrain.flattenZone(x + SILO_FOOTPRINT / 2, SILO_FLAT_HALF, TERRAIN_BLEND_W)
-      );
-      this._terrain.buildFeatures();
-      this._terrain.build();
-      addOK(2);
-    } catch(e) { addFail(2, e.message); }
-
-    // ---- STEP 3: LightingSystem ----
-    try {
-      this._lighting = new LightingSystem(this);
-      if (this._terrain) {
-        const fp = this._terrain.getFeaturePositions();
-        this._lighting.setVoidheartPositions(fp.veins);
-        this._lighting.setPoolPositions(fp.pools);
-      }
-      addOK(3);
-    } catch(e) { addFail(3, e.message); }
-
-    // ---- STEP 4: PlayerShip ----
-    try {
-      this._ship = new PlayerShip(this, 120, H / 2, this._planeConf);
-      this._ship.setDepth(10);
-      addOK(4);
-    } catch(e) { addFail(4, e.message); }
-
-    // ---- STEP 5: EnemyManager ----
-    try {
-      this.playerBolts = this.physics.add.group({
-        classType: Projectile, maxSize: 30, runChildUpdate: true
-      });
-      this.enemyBolts = this.physics.add.group({
-        classType: Projectile, maxSize: 50, runChildUpdate: true
-      });
-      this.missiles = this.physics.add.group({
-        classType: Projectile, maxSize: 8, runChildUpdate: true
-      });
-      const groundY = Math.floor(H * 0.72);
-      this._enemyManager = new EnemyManager(
-        this, groundY, this.enemyBolts, this.missiles
-      );
-      addOK(5);
-    } catch(e) { addFail(5, e.message); }
-
-    // ---- STEP 6: _setupCollision ----
-    try {
-      if (this._enemyManager && this._ship && this.playerBolts) {
-        this._setupCollision();
-      }
-      addOK(6);
-    } catch(e) { addFail(6, e.message); }
-
-    // Game state — disable game logic; diagnostic only
-    this._elapsed      = 0;
-    this._missionTime  = 30;
-    this._gameOver     = true;
-    this._trauma       = 0;
-    this._fireCooldown = 0;
-  }
-
-  /* === ORIGINAL create() — commented out for crash diagnostic ===
   create() {
     const W = 960;
     const H = 540;
@@ -294,9 +189,6 @@ class PilotGameScene extends Phaser.Scene {
     this._trauma       = 0;    // camera shake trauma value (0–1)
     this._fireCooldown = 0;    // seconds until next shot is allowed
 
-    // ---- Collision diagnostic — runs once, 3s after scene start ----
-    this.time.delayedCall(3000, this._runCollisionDiagnostic, [], this);
-
     // ---- Init error display (on-screen, no console needed) ----
     if (initErrors.length > 0) {
       this.add.rectangle(480, 270, 900, 400, 0x000000, 0.9)
@@ -312,15 +204,12 @@ class PilotGameScene extends Phaser.Scene {
       });
     }
   }
-  === END ORIGINAL create() === */
 
   // ==========================================================
   // UPDATE
   // ==========================================================
 
   update(time, delta) {
-    // ---- DIAGNOSTIC MODE: skip all game logic ----
-    if (this._diagnosticMode) return;
     if (this._gameOver) return;
 
     this._input.update();
@@ -372,6 +261,9 @@ class PilotGameScene extends Phaser.Scene {
       this._ship.y,                  // player screen Y
       this.cameras.main.scrollX      // camera left-edge world X
     );
+
+    // Manual bolt-vs-enemy overlap checks (replaces static group pairs)
+    this._checkBoltEnemyOverlaps();
 
     // Update on-screen HUD
     this._updateHUD();
@@ -437,25 +329,9 @@ class PilotGameScene extends Phaser.Scene {
   // ==========================================================
 
   _setupCollision() {
-    // ---- Pair 1: player bolts hitting OrcCannon structures ----
-    // getCannons() returns all live cannon instances — each has a static
-    // arcade body matching its structure hitbox (set up in OrcCannon ctor).
-    this.physics.add.overlap(
-      this.playerBolts,
-      this._enemyManager.getCannons(),
-      this._onBoltHitCannon,
-      null,
-      this
-    );
-
-    // ---- Pair 2: player bolts hitting OrcSilo structures ----
-    this.physics.add.overlap(
-      this.playerBolts,
-      this._enemyManager.getSilos(),
-      this._onBoltHitSilo,
-      null,
-      this
-    );
+    // Pairs 1 & 2 (player bolts vs cannons/silos) are handled by
+    // _checkBoltEnemyOverlaps() each frame — plain arrays instead of
+    // static groups to avoid the getTopLeft() crash on Graphics objects.
 
     // ---- Pair 3: enemy plasma orbs hitting the player ----
     this.physics.add.overlap(
@@ -483,6 +359,45 @@ class PilotGameScene extends Phaser.Scene {
       null,
       this
     );
+  }
+
+  // ==========================================================
+  // MANUAL BOLT-vs-ENEMY OVERLAP — replaces static group pairs
+  //
+  // Called every frame from update(). Tests each active player
+  // bolt against all live cannons and silos using simple AABB
+  // distance checks matching the original static body sizes.
+  // ==========================================================
+
+  _checkBoltEnemyOverlaps() {
+    if (!this.playerBolts) return;
+    const bolts   = this.playerBolts.getChildren();
+    const cannons = this._enemyManager.getCannons();
+    const silos   = this._enemyManager.getSilos();
+
+    bolts.forEach(bolt => {
+      if (!bolt.active || !bolt.body || !bolt.body.enable) return;
+      const bx = bolt.x;
+      const by = bolt.y;
+
+      cannons.forEach(cannon => {
+        if (!cannon.health || !cannon.health.isAlive()) return;
+        const dx = Math.abs(bx - cannon.x);
+        const dy = Math.abs(by - cannon.y);
+        if (dx < 28 && dy < 150) {
+          this._onBoltHitCannon(bolt, cannon);
+        }
+      });
+
+      silos.forEach(silo => {
+        if (!silo.health || !silo.health.isAlive()) return;
+        const dx = Math.abs(bx - silo.x);
+        const dy = Math.abs(by - silo.y);
+        if (dx < 60 && dy < 180) {
+          this._onBoltHitSilo(bolt, silo);
+        }
+      });
+    });
   }
 
   // ==========================================================
@@ -610,90 +525,6 @@ class PilotGameScene extends Phaser.Scene {
     if (interceptPos) {
       this._lighting.addExplosionLight(interceptPos.x, interceptPos.y);
     }
-  }
-
-  // ==========================================================
-  // COLLISION DIAGNOSTIC — runs once, 3s after scene start
-  // Stores full report in window._ipcfDiagnostic for external reading
-  // ==========================================================
-
-  _runCollisionDiagnostic() {
-    const report = [];
-
-    // 1. playerBolts group
-    const pb = this.playerBolts;
-    const pbExists = !!pb;
-    const pbPhysics = pbExists ? (pb.physicsType !== undefined) : false;
-    report.push('playerBolts exists: ' + pbExists + ', has physicsType: ' + pbPhysics +
-      (pbPhysics ? ' (' + pb.physicsType + ')' : ''));
-
-    // 2. cannonGroup
-    const cg = this._enemyManager.getCannons();
-    const cgHasGetLen = !!(cg && typeof cg.getLength === 'function');
-    report.push('cannonGroup is static group: ' + cgHasGetLen);
-    if (cgHasGetLen) report.push('cannonGroup count: ' + cg.getLength());
-
-    // 3. siloGroup
-    const sg = this._enemyManager.getSilos();
-    const sgHasGetLen = !!(sg && typeof sg.getLength === 'function');
-    report.push('siloGroup is static group: ' + sgHasGetLen);
-    if (sgHasGetLen) report.push('siloGroup count: ' + sg.getLength());
-
-    // 4. First cannon body details
-    if (cgHasGetLen && cg.getLength() > 0) {
-      const c0 = cg.getChildren()[0];
-      const b  = c0 ? c0.body : null;
-      if (b) {
-        report.push('cannon[0] body: enabled=' + b.enable +
-          ' x=' + Math.round(b.x) + ' y=' + Math.round(b.y) +
-          ' w=' + Math.round(b.width) + ' h=' + Math.round(b.height));
-      } else {
-        report.push('cannon[0] body: null');
-      }
-    } else {
-      report.push('cannon[0] body: no cannons in group');
-    }
-
-    // 5. First silo body details
-    if (sgHasGetLen && sg.getLength() > 0) {
-      const s0 = sg.getChildren()[0];
-      const b  = s0 ? s0.body : null;
-      if (b) {
-        report.push('silo[0] body: enabled=' + b.enable +
-          ' x=' + Math.round(b.x) + ' y=' + Math.round(b.y) +
-          ' w=' + Math.round(b.width) + ' h=' + Math.round(b.height));
-      } else {
-        report.push('silo[0] body: null');
-      }
-    } else {
-      report.push('silo[0] body: no silos in group');
-    }
-
-    // 6. Physics collider count
-    const colliders = this.physics.world.colliders;
-    if (colliders) {
-      const count = colliders.getActive ? colliders.getActive().length : 'unknown';
-      report.push('physics colliders registered: ' + count);
-    } else {
-      report.push('physics colliders: world.colliders is null');
-    }
-
-    // 7. Extra: first player bolt body check (if any active)
-    const activeBolts = pb ? pb.getChildren().filter(b => b.active) : [];
-    if (activeBolts.length > 0) {
-      const ab = activeBolts[0];
-      const bb = ab.body;
-      report.push('activeBolt[0] body: enabled=' + (bb ? bb.enable : 'N/A') +
-        ' x=' + Math.round(ab.x) + ' y=' + Math.round(ab.y) +
-        (bb ? ' w=' + Math.round(bb.width) + ' h=' + Math.round(bb.height) : ''));
-    } else {
-      report.push('activeBolt[0]: none active at diagnostic time');
-    }
-
-    // Store for external reading
-    const text = report.join('\n');
-    window._ipcfDiagnostic = text;
-    console.log('[IPCF DIAGNOSTIC]\n' + text);
   }
 
   // ==========================================================

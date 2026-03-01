@@ -43,11 +43,11 @@ class EnemyManager {
     this._seed  = Math.random() * 1000;
     this._randN = 0;
 
-    // Static physics groups for arcade overlap detection.
-    // PilotGameScene passes these to physics.add.overlap() so Phaser's
-    // broadphase can test projectile bodies against enemy structure bodies.
-    this._cannonGroup = scene.physics.add.staticGroup();
-    this._siloGroup   = scene.physics.add.staticGroup();
+    // Plain arrays of enemy instances — PilotGameScene performs manual
+    // overlap checks each frame instead of using Phaser static groups
+    // (which crash on Graphics objects due to missing getTopLeft()).
+    this._cannonGroup = [];
+    this._siloGroup   = [];
 
     // Create the shared 3×3 white pixel texture used by Phaser particle
     // emitters in OrcSilo (missile trail + impact bursts).
@@ -133,16 +133,16 @@ class EnemyManager {
       if (p.type === 'cannon') {
         const cannon = new OrcCannon(this._scene, p.x, H, this._enemyBolts);
         this._enemies.push(cannon);
-        this._cannonGroup.add(cannon);
+        this._cannonGroup.push(cannon);
       } else {
         const silo = new OrcSilo(this._scene, p.x, H, this._missiles);
         this._enemies.push(silo);
-        this._siloGroup.add(silo);
+        this._siloGroup.push(silo);
       }
     });
 
     console.log(`[EnemyManager] ${placements.length} enemies placed, cursor=${cursor}`);
-    console.log('cannonGroup count=' + this._cannonGroup.getLength() + ' siloGroup count=' + this._siloGroup.getLength());
+    console.log('cannons=' + this._cannonGroup.length + ' silos=' + this._siloGroup.length);
   }
 
   // ================================================================
@@ -192,14 +192,14 @@ class EnemyManager {
   //   this.physics.add.overlap(playerBolts, orcCannons, onBoltHitCannon)
   //   this.physics.add.overlap(playerBolts, orcSilos,   onBoltHitSilo)
 
-  // Returns the Phaser static group containing all OrcCannon instances —
-  // used by PilotGameScene to register arcade physics overlaps.
+  // Returns the plain array of all OrcCannon instances —
+  // used by PilotGameScene for manual overlap checks each frame.
   getCannons() {
     return this._cannonGroup;
   }
 
-  // Returns the Phaser static group containing all OrcSilo instances —
-  // used by PilotGameScene to register arcade physics overlaps.
+  // Returns the plain array of all OrcSilo instances —
+  // used by PilotGameScene for manual overlap checks each frame.
   getSilos() {
     return this._siloGroup;
   }
