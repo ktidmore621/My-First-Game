@@ -77,110 +77,110 @@ class PilotGameScene extends Phaser.Scene {
   create() {
     const W = 960;
     const H = 540;
+    const initErrors = [];
 
     // ---- Physics world bounds ----
-    // The ship's body.setCollideWorldBounds() keeps it within this rectangle
     this.physics.world.setBounds(0, 0, BATTLEFIELD_W, H);
 
     // ---- Visuals (build order matters — lower depth = drawn first) ----
     this._buildSky(W, H);      // depth 0 — fixed, never scrolls
 
     // ---- Terrain system ----
-    // Generates height map, flattens under each enemy, bakes static ground
-    // to a canvas-backed texture, creates parallax hill TileSprites, and
-    // starts the animated overlay + particle emitters.
-    this._terrain = new TerrainSystem(this, BATTLEFIELD_W);
+    try {
+      this._terrain = new TerrainSystem(this, BATTLEFIELD_W);
 
-    // Flatten terrain under every enemy structure (cannon midX = x + footprint/2)
-    ENEMY_CANNON_XS.forEach(x =>
-      this._terrain.flattenZone(x + CANNON_FOOTPRINT / 2, CANNON_FLAT_HALF, TERRAIN_BLEND_W)
-    );
-    ENEMY_SILO_XS.forEach(x =>
-      this._terrain.flattenZone(x + SILO_FOOTPRINT / 2, SILO_FLAT_HALF, TERRAIN_BLEND_W)
-    );
+      ENEMY_CANNON_XS.forEach(x =>
+        this._terrain.flattenZone(x + CANNON_FOOTPRINT / 2, CANNON_FLAT_HALF, TERRAIN_BLEND_W)
+      );
+      ENEMY_SILO_XS.forEach(x =>
+        this._terrain.flattenZone(x + SILO_FOOTPRINT / 2, SILO_FLAT_HALF, TERRAIN_BLEND_W)
+      );
 
-    this._terrain.buildFeatures();   // generate roads, craters, veins, pools, pits
-    this._terrain.build();           // create all Phaser display objects (depth 0.5–1.6)
+      this._terrain.buildFeatures();
+      this._terrain.build();
+    } catch(e) { initErrors.push('TerrainSystem: ' + e.message); }
 
     // ---- Lighting system (depth 30–31, screen space) ----
-    this._lighting = new LightingSystem(this);
-    const featurePos = this._terrain.getFeaturePositions();
-    this._lighting.setVoidheartPositions(featurePos.veins);
-    this._lighting.setPoolPositions(featurePos.pools);
+    try {
+      this._lighting = new LightingSystem(this);
+      const featurePos = this._terrain.getFeaturePositions();
+      this._lighting.setVoidheartPositions(featurePos.veins);
+      this._lighting.setPoolPositions(featurePos.pools);
+    } catch(e) { initErrors.push('LightingSystem: ' + e.message); }
 
     // ---- Projectile groups ----
-    // All three groups share classType: Projectile so group.get() constructs
-    // new instances on demand (up to maxSize), and runChildUpdate: true means
-    // each active Projectile's preUpdate() is called automatically each frame.
+    try {
+      this.playerBolts = this.physics.add.group({
+        classType:       Projectile,
+        maxSize:         30,
+        runChildUpdate:  true,
+      });
 
-    // Player's PX-9 plasma bolts — IPDF elongated bolt sprite
-    this.playerBolts = this.physics.add.group({
-      classType:       Projectile,
-      maxSize:         30,
-      runChildUpdate:  true,
-    });
+      this.enemyBolts = this.physics.add.group({
+        classType:       Projectile,
+        maxSize:         50,
+        runChildUpdate:  true,
+      });
 
-    // OrcCannon orc plasma orbs — 6×6 magenta square sprite
-    this.enemyBolts = this.physics.add.group({
-      classType:       Projectile,
-      maxSize:         50,   // 10 cannons × 5 bolts each
-      runChildUpdate:  true,
-    });
-
-    // OrcSilo missile physics proxies — invisible bodies for overlap only
-    this.missiles = this.physics.add.group({
-      classType:       Projectile,
-      maxSize:         8,    // 4 silos × 2 missiles each
-      runChildUpdate:  true,
-    });
+      this.missiles = this.physics.add.group({
+        classType:       Projectile,
+        maxSize:         8,
+        runChildUpdate:  true,
+      });
+    } catch(e) { initErrors.push('ProjectileGroups: ' + e.message); }
 
     // ---- Player ship ----
-    // Spawns near the left edge, vertically centred
-    this._ship = new PlayerShip(this, 120, H / 2, this._planeConf);
-    this._ship.setDepth(10);
+    try {
+      this._ship = new PlayerShip(this, 120, H / 2, this._planeConf);
+      this._ship.setDepth(10);
 
-    // Aim line — world-space red dashed line drawn from ship nose each frame
-    this._aimLineGfx = this.add.graphics().setDepth(35);
+      this._aimLineGfx = this.add.graphics().setDepth(35);
 
-    // When the ship's HealthSystem hits zero it emits 'destroyed'
-    this._ship.on('destroyed', () => this._triggerGameOver('defeated'));
+      this._ship.on('destroyed', () => this._triggerGameOver('defeated'));
+    } catch(e) { initErrors.push('PlayerShip: ' + e.message); }
 
     // ---- Camera ----
-    // Clamp camera to the world rectangle so it never shows void
-    this.cameras.main.setBounds(0, 0, BATTLEFIELD_W, H);
-    // Follow with gentle lag (0.1 lerp) for a smooth cockpit feel
-    this.cameras.main.startFollow(this._ship, true, 0.1, 0.1);
-    // Slight zoom ramp will be driven by combat events in a future session
-    this.cameras.main.setZoom(1.0);
+    try {
+      this.cameras.main.setBounds(0, 0, BATTLEFIELD_W, H);
+      this.cameras.main.startFollow(this._ship, true, 0.1, 0.1);
+      this.cameras.main.setZoom(1.0);
+    } catch(e) { initErrors.push('Camera: ' + e.message); }
 
     // ---- Input system ----
-    this._input = new InputSystem(this);
-    // Pilot mode only needs the FIRE button; hide the others
-    this._input.weaponSelectBtn.setVisible(false);
-    this._input.evadeBtn.setVisible(false);
-    this._input.fireBtn.setVisible(true);
+    try {
+      this._input = new InputSystem(this);
+      this._input.weaponSelectBtn.setVisible(false);
+      this._input.evadeBtn.setVisible(false);
+      this._input.fireBtn.setVisible(true);
+    } catch(e) { initErrors.push('InputSystem: ' + e.message); }
 
     // ---- HUD (fixed to viewport) ----
-    this._buildHUD(W, H);
+    try {
+      this._buildHUD(W, H);
+    } catch(e) { initErrors.push('setupHUD: ' + e.message); }
 
     // ---- Sound system (stub — no audio assets yet) ----
-    this._sound = new SoundSystem(this);
+    try {
+      this._sound = new SoundSystem(this);
+    } catch(e) { initErrors.push('SoundSystem: ' + e.message); }
 
     // ---- Enemy population ----
-    // EnemyManager creates all OrcCannon / OrcSilo instances at their
-    // battlefield world positions.  They register themselves with the scene
-    // via scene.add.existing(), so Phaser renders them automatically.
-    // Both bolt groups are passed so enemies can acquire Projectile slots.
-    const groundY = Math.floor(H * 0.72); // matches _buildGround horizonY
-    this._enemyManager = new EnemyManager(
-      this, groundY, this.enemyBolts, this.missiles
-    );
+    try {
+      const groundY = Math.floor(H * 0.72);
+      this._enemyManager = new EnemyManager(
+        this, groundY, this.enemyBolts, this.missiles
+      );
+    } catch(e) { initErrors.push('EnemyManager: ' + e.message); }
 
     // ---- Phaser effects ----
-    this._buildEffects();
+    try {
+      this._buildEffects();
+    } catch(e) { initErrors.push('buildEffects: ' + e.message); }
 
     // ---- Arcade physics collision pairs ----
-    this._setupCollision();
+    try {
+      this._setupCollision();
+    } catch(e) { initErrors.push('setupCollision: ' + e.message); }
 
     // ---- Game state ----
     this._elapsed      = 0;
@@ -191,6 +191,21 @@ class PilotGameScene extends Phaser.Scene {
 
     // ---- Collision diagnostic — runs once, 3s after scene start ----
     this.time.delayedCall(3000, this._runCollisionDiagnostic, [], this);
+
+    // ---- Init error display (on-screen, no console needed) ----
+    if (initErrors.length > 0) {
+      this.add.rectangle(480, 270, 900, 400, 0x000000, 0.9)
+        .setScrollFactor(0).setDepth(1000);
+      this.add.text(480, 100, 'INIT ERRORS:', {
+        fontSize: '18px', fill: '#ff0000'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
+      initErrors.forEach((err, i) => {
+        this.add.text(480, 140 + (i * 35), err, {
+          fontSize: '13px', fill: '#ffff00',
+          wordWrap: { width: 860 }
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
+      });
+    }
   }
 
   // ==========================================================
