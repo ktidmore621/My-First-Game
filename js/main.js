@@ -1,13 +1,15 @@
 /* ============================================================
    main.js — Phaser Game Entry Point
    ============================================================
-   Creates and starts the Phaser 3 game instance.
+   Creates and starts the Phaser 3 game instance with Phaser Scenes only.
 
-   Scene load order (scripts must be declared in index.html
-   before this file):
-     1. MainMenuScene   — title screen + mode selection
-     2. PlaneSelectScene — aircraft chooser (Pilot path only)
-     3. PilotGameScene  — gameplay (placeholder; full impl next session)
+   Scene registration (in start order):
+     1. MainMenuScene    — title screen + mode selection
+     2. PlaneSelectScene — aircraft chooser (Phaser Scene)
+     3. PilotGameScene   — gameplay (Phaser Scene)
+     4. GameOverScene    — game over screen (Phaser Scene)
+
+   All scenes are native Phaser Scenes — no old state machine.
 
    Coordinate system: fixed 960 × 540 (16:9 landscape).
    Phaser's Scale.FIT mode handles CSS scaling to any screen.
@@ -16,7 +18,7 @@
    ============================================================ */
 
 const config = {
-  type: Phaser.CANVAS, // Canvas renderer required — all entities use raw Canvas 2D API
+  type: Phaser.CANVAS, // Canvas renderer
 
   width:  960,
   height: 540,
