@@ -220,6 +220,7 @@ class PilotGameScene extends Phaser.Scene {
 
   update(time, delta) {
     if (this._gameOver) return;
+    if (!this._input || !this._ship || !this._enemyManager) return;
 
     this._input.update();
 
