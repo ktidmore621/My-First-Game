@@ -315,6 +315,7 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
     // Phaser.Math.Angle.Between computes the angle from missile to player cleanly.
     // Phaser.Math.Angle.RotateTo steps toward that target angle by at most
     // (MISSILE_TURN_RATE * dt) radians, automatically taking the shortest arc.
+    if (!this._missiles) return;
     const trackRateRad = (MISSILE_TURN_RATE * Math.PI / 180); // deg/s → rad/s
     this._missiles.forEach(m => {
       if (!m.active) return;
@@ -410,7 +411,7 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
         { x:  -1, y: -28, vx:   28, vy: -52, age: 0 },
       ];
     }
-    if (this._steamParticles.length > 0) {
+    if (this._steamParticles && this._steamParticles.length > 0) {
       this._steamTimer += dt;
       this._steamParticles.forEach(p => {
         p.age += dt;
@@ -805,6 +806,7 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
 
   // Advances launch smoke particles; removes those older than 2 s.
   _updateLaunchSmoke(dt) {
+    if (!this._launchSmoke) return;
     this._launchSmoke.forEach(p => {
       p.age += dt;
       p.wx  += p.vx * dt;
@@ -817,6 +819,7 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
   // Particles drift upward ~18 px/s in screen space so they linger visibly
   // behind the missile path after it has moved on.
   _updateSmokeTrail(dt) {
+    if (!this._smokeTrailParticles) return;
     this._smokeTrailParticles.forEach(p => {
       p.age += dt;
       p.y   -= 18 * dt;  // drift upward in screen space
@@ -827,7 +830,7 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
   // Renders launch smoke puffs in world-space (screen X = wx - cameraX).
   // Quadratic alpha fade so puffs tail off gently.
   _renderLaunchSmoke(ctx, cameraScrollX) {
-    if (this._launchSmoke.length === 0) return;
+    if (!this._launchSmoke || this._launchSmoke.length === 0) return;
     this._launchSmoke.forEach(p => {
       const alpha = Math.max(0, 1.0 - p.age / 2.0);
       ctx.globalAlpha = alpha * alpha;   // quadratic fade
@@ -909,6 +912,7 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
 
   // Advances all active impact explosions; deactivates those past 1.5 s.
   _updateImpactExplosions(dt) {
+    if (!this._impactExplosions) return;
     this._impactExplosions.forEach(ex => {
       if (!ex.active) return;
       ex.timer += dt;
@@ -940,6 +944,7 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
   // Frame 3 (0.05 – 0.6 s): 4 gold spark pixels
   // Frame 4 (0.10 – 1.1 s): 4 dark-purple smoke puffs
   _renderImpactExplosions(ctx, cameraScrollX) {
+    if (!this._impactExplosions) return;
     this._impactExplosions.forEach(ex => {
       if (!ex.active) return;
 
@@ -993,6 +998,7 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
   // Called from update() before the dying-check so explosions continue
   // rendering even while the silo death animation is playing.
   _updateMidairExplosions(dt) {
+    if (!this._midairExplosions) return;
     this._midairExplosions.forEach(ex => {
       ex.timer += dt;
       ex.fragments.forEach(f => {
@@ -1011,6 +1017,12 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
 
   _updateExplosion(dt) {
     this._deathTimer += dt;
+
+    if (!this._burstFragments) this._burstFragments = [];
+    if (!this._sparkPixels) this._sparkPixels = [];
+    if (!this._goldDebris) this._goldDebris = [];
+    if (!this._smokeParticles) this._smokeParticles = [];
+    if (!this._smokeGoldSparks) this._smokeGoldSparks = [];
 
     this._burstFragments.forEach(d => {
       d.x  += d.vx * dt;
@@ -1705,7 +1717,7 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
   // Called after all structure layers so steam renders on top.
   // ----------------------------------------------------------------
   _renderSteamBurst(ctx) {
-    if (this._steamParticles.length === 0) return;
+    if (!this._steamParticles || this._steamParticles.length === 0) return;
     const maxAge = 0.28;
     this._steamParticles.forEach(p => {
       const lifeRatio = Math.max(0, 1.0 - p.age / maxAge);
@@ -2187,10 +2199,11 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
   // drawn on top (lasts 2 render frames ≈ 2/60 s).
   // ----------------------------------------------------------------
   _renderMissiles(ctx, cameraScrollX) {
+    if (!this._missiles || !this._missiles.length) return;
     // ---- Missile smoke trail particles — rendered first so they appear behind sprites ----
     // 2×2 px dark-grey puffs that linger in world space after the missile passes.
     // Linear alpha fade over their 0.4 s lifetime.
-    if (this._smokeTrailParticles.length > 0) {
+    if (this._smokeTrailParticles && this._smokeTrailParticles.length > 0) {
       ctx.fillStyle = '#444444';
       this._smokeTrailParticles.forEach(p => {
         ctx.globalAlpha = Math.max(0, 1.0 - p.age / 0.4);
@@ -2340,6 +2353,7 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
 
     // ---- Mid-air missile explosions (shot down by player) ----
     // Rendered in screen-space after all missile sprites so they draw on top.
+    if (!this._midairExplosions) return;
     this._midairExplosions.forEach(ex => {
       const esx   = Math.round(ex.worldX - cameraScrollX);
       const alpha = ex.timer < 0.3 ? 1.0 : Math.max(0, 1.0 - (ex.timer - 0.3) / 0.3);
