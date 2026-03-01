@@ -87,6 +87,7 @@ class OrcCannon extends Phaser.GameObjects.Graphics {
     scene.physics.add.existing(this, true);   // true = static body
     this.body.setSize(56, 150);
     this.body.setOffset(-28, -150);
+    this.body.updateFromGameObject();
 
     // ---- Shared bolt group (Phaser pool replacing internal _bolts array) ----
     // group.get() acquires an inactive Projectile slot and group.kill() returns it.
