@@ -334,6 +334,7 @@ class PlaneSelectScene extends Phaser.Scene {
         const plane = this._planeDefs[index];
         this.cameras.main.flash(200, 255, 255, 255);
         this.time.delayedCall(200, () => {
+          this.scene.stop();
           this.scene.start('PilotGameScene', {
             mode: this.mode,
             plane: { ...plane },
