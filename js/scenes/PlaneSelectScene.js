@@ -328,17 +328,31 @@ class PlaneSelectScene extends Phaser.Scene {
       const timeSinceLast = now - lastTapTime;
       lastTapTime = now;
 
-      if (timeSinceLast < 350) {
-        // Double tap — launch the game
+      if (timeSinceLast < 500) {
+        // Double tap — launch the game with a white flash
+        lastTapTime = 0; // prevent triple-tap re-trigger
         const plane = this._planeDefs[index];
-        this.scene.start('PilotGameScene', {
-          mode: this.mode,
-          plane: { ...plane },
+        this.cameras.main.flash(200, 255, 255, 255);
+        this.time.delayedCall(200, () => {
+          this.scene.start('PilotGameScene', {
+            mode: this.mode,
+            plane: { ...plane },
+          });
         });
       } else {
         // Single tap — select this card
         this._selectedIndex = index;
         this._updateCardSelection();
+
+        // Brief scale bounce to confirm the first tap registered
+        this.tweens.killTweensOf(container);
+        this.tweens.add({
+          targets: container,
+          scaleX: 1.05, scaleY: 1.05,
+          duration: 75,
+          ease: 'Power1',
+          yoyo: true,
+        });
       }
     });
 
