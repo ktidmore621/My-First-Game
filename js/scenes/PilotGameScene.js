@@ -62,11 +62,14 @@ class PilotGameScene extends Phaser.Scene {
   // ==========================================================
 
   init(data) {
-    this._mode      = (data && data.mode)  ? data.mode  : 'pilot';
-    // Default to Fighter stats if no plane was passed
-    this._planeConf = (data && data.plane) ? data.plane : {
-      id: 'fighter', name: 'Fighter', color: 0x42a5f5,
-      speed: 82, durability: 55, weaponSize: 65, maneuverability: 90,
+    data = data || {};
+    this._mode = data.mode || 'pilot';
+    this._planeConfig = data.plane || {
+      speed: 160,
+      durability: 100,
+      weaponSize: 1,
+      maneuverability: 1,
+      color: 0x00aaff
     };
   }
 
@@ -137,7 +140,7 @@ class PilotGameScene extends Phaser.Scene {
 
     // ---- Player ship ----
     try {
-      this._ship = new PlayerShip(this, 120, H / 2, this._planeConf);
+      this._ship = new PlayerShip(this, 120, H / 2, this._planeConfig);
       this._ship.setDepth(10);
 
       this._aimLineGfx = this.add.graphics().setDepth(35);
@@ -314,7 +317,7 @@ class PilotGameScene extends Phaser.Scene {
     const noseX   = this._ship.x + Math.cos(shipRad) * 32;
     const noseY   = this._ship.y + Math.sin(shipRad) * 32;
 
-    bolt.fire(noseX, noseY, bvx, bvy, BOLT_DAMAGE, this._planeConf.color, angle);
+    bolt.fire(noseX, noseY, bvx, bvy, BOLT_DAMAGE, this._planeConfig.color, angle);
 
     // ---- Muzzle flash — particle burst at the bolt spawn point ----
     if (this._muzzleEmitter) {
@@ -554,7 +557,7 @@ class PilotGameScene extends Phaser.Scene {
       speed:    { min: 60,  max: 180 },
       scale:    { start: 1.0, end: 0 },
       alpha:    { start: 1.0, end: 0 },
-      tint:     [this._planeConf.color, 0xffffff],
+      tint:     [this._planeConfig.color, 0xffffff],
       lifespan: 150,
       quantity: 0,       // burst mode — explode() fires manually
       emitting: false,
@@ -829,13 +832,13 @@ class PilotGameScene extends Phaser.Scene {
       this.cameras.main.fade(900, 0, 0, 0);
       this.cameras.main.once('camerafadeoutcomplete', () => {
         this._cleanup();
-        this.scene.start('GameOverScene', { result: 'defeated', score, plane: this._planeConf });
+        this.scene.start('GameOverScene', { result: 'defeated', score, plane: this._planeConfig });
       });
     } else {
       // Victory — short delay then transition (no death animation needed)
       this.time.delayedCall(400, () => {
         this._cleanup();
-        this.scene.start('GameOverScene', { result: 'victory', score, plane: this._planeConf });
+        this.scene.start('GameOverScene', { result: 'victory', score, plane: this._planeConfig });
       });
     }
   }
