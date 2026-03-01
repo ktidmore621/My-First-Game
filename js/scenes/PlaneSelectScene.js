@@ -16,8 +16,8 @@
      - Particle spark emitter follows the selected card
 
    TRANSITIONS:
-     FLY!   → PilotGameScene  (passes mode + plane data)
-     ← Back → MainMenuScene
+     Double-tap card → PilotGameScene  (passes mode + plane data)
+     ← Back          → MainMenuScene
    ============================================================ */
 
 class PlaneSelectScene extends Phaser.Scene {
@@ -110,7 +110,7 @@ class PlaneSelectScene extends Phaser.Scene {
       color: '#ffffff',
     }).setOrigin(0.5, 0.5);
 
-    this.add.text(W / 2, 78, 'Tap a card, then tap FLY!', {
+    this.add.text(W / 2, 78, 'TAP TO SELECT \u2014 DOUBLE TAP TO FLY', {
       fontFamily: 'monospace',
       fontSize: '16px',
       color: '#5a8aaa',
@@ -162,9 +162,6 @@ class PlaneSelectScene extends Phaser.Scene {
 
     // ---- Back button (top-left) ----
     this._makeBackButton();
-
-    // ---- FLY! confirm button ----
-    this._makeFlyButton(W, H);
   }
 
   // ==========================================================
@@ -325,8 +322,24 @@ class PlaneSelectScene extends Phaser.Scene {
       }
     });
 
+    let lastTapTime = 0;
     container.on('pointerdown', () => {
-      this._applySelection(index, true);
+      const now = this.time.now;
+      const timeSinceLast = now - lastTapTime;
+      lastTapTime = now;
+
+      if (timeSinceLast < 350) {
+        // Double tap — launch the game
+        const plane = this._planeDefs[index];
+        this.scene.start('PilotGameScene', {
+          mode: this.mode,
+          plane: { ...plane },
+        });
+      } else {
+        // Single tap — select this card
+        this._selectedIndex = index;
+        this._updateCardSelection();
+      }
     });
 
     // Store refs for later border/scale updates
@@ -336,6 +349,11 @@ class PlaneSelectScene extends Phaser.Scene {
   // ==========================================================
   // SELECTION LOGIC
   // ==========================================================
+
+  /** Convenience wrapper — updates visuals for the current _selectedIndex. */
+  _updateCardSelection() {
+    this._applySelection(this._selectedIndex, true);
+  }
 
   /**
    * Update the visual state of all cards to reflect a new selection.
@@ -426,43 +444,4 @@ class PlaneSelectScene extends Phaser.Scene {
     });
   }
 
-  /** FLY! confirm button — transitions to PilotGameScene with plane data. */
-  _makeFlyButton(W, H) {
-    const container = this.add.container(W / 2, 459);
-
-    const bg = this.add.graphics();
-    bg.fillStyle(0x0d47a1);
-    bg.fillRect(-110, -29, 220, 58);
-    bg.lineStyle(2.5, 0x42a5f5);
-    bg.strokeRect(-110, -29, 220, 58);
-
-    const label = this.add.text(0, 0, 'FLY!', {
-      fontFamily: 'monospace',
-      fontSize: '26px',
-      fontStyle: 'bold',
-      color: '#ffffff',
-    }).setOrigin(0.5, 0.5);
-
-    container.add([bg, label]);
-    container.setSize(220, 58);
-    container.setInteractive({ useHandCursor: true });
-
-    container.on('pointerover', () => {
-      this.tweens.killTweensOf(container);
-      this.tweens.add({ targets: container, scaleX: 1.1, scaleY: 1.1, duration: 120 });
-    });
-    container.on('pointerout', () => {
-      this.tweens.killTweensOf(container);
-      this.tweens.add({ targets: container, scaleX: 1, scaleY: 1, duration: 120 });
-    });
-    container.on('pointerdown', () => {
-      const plane = this._planeDefs[this._selectedIndex];
-      // Pass a plain-object copy of the plane data so PilotGameScene can
-      // use it without depending on the old Plane class
-      this.scene.start('PilotGameScene', {
-        mode:  this.mode,
-        plane: { ...plane },
-      });
-    });
-  }
 }
