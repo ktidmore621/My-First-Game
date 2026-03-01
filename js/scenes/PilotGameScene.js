@@ -55,6 +55,7 @@ class PilotGameScene extends Phaser.Scene {
 
   constructor() {
     super({ key: 'PilotGameScene' });
+    this._diagnosticMode = false;
   }
 
   // ==========================================================
@@ -71,9 +72,113 @@ class PilotGameScene extends Phaser.Scene {
   }
 
   // ==========================================================
-  // CREATE
+  // CREATE — DIAGNOSTIC MODE (step-by-step system bring-up)
   // ==========================================================
 
+  create(data) {
+    // vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+    // DIAGNOSTIC: Tests each subsystem one at a time to isolate
+    // the crash.  If the screen goes black, the last green
+    // "STEP N OK" that appeared identifies the system BEFORE the
+    // crash.  Original create() body preserved as block comment.
+    // vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+
+    this._diagnosticMode = true;
+
+    const W = 960, H = 540;
+    let stepY = 80;
+
+    const addOK = (n) => {
+      this.add.text(480, stepY, 'STEP ' + n + ' OK', {
+        fontSize: '24px', fill: '#00ff00'
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(999);
+      stepY += 40;
+    };
+    const addFail = (n, msg) => {
+      this.add.text(480, stepY, 'STEP ' + n + ' FAIL: ' + msg, {
+        fontSize: '14px', fill: '#ff4444',
+        wordWrap: { width: 860 }
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(999);
+      stepY += 50;
+    };
+
+    // ---- STEP 1: Bare scene rendering ----
+    this.add.rectangle(480, 270, 960, 540, 0x071020)
+      .setScrollFactor(0);
+    this.add.text(480, 40, 'PilotGameScene DIAGNOSTIC', {
+      fontSize: '18px', fill: '#aaaaaa'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(999);
+    addOK(1);
+
+    // ---- STEP 2: TerrainSystem ----
+    try {
+      this.physics.world.setBounds(0, 0, BATTLEFIELD_W, H);
+      this._buildSky(W, H);
+      this._terrain = new TerrainSystem(this, BATTLEFIELD_W);
+      ENEMY_CANNON_XS.forEach(x =>
+        this._terrain.flattenZone(x + CANNON_FOOTPRINT / 2, CANNON_FLAT_HALF, TERRAIN_BLEND_W)
+      );
+      ENEMY_SILO_XS.forEach(x =>
+        this._terrain.flattenZone(x + SILO_FOOTPRINT / 2, SILO_FLAT_HALF, TERRAIN_BLEND_W)
+      );
+      this._terrain.buildFeatures();
+      this._terrain.build();
+      addOK(2);
+    } catch(e) { addFail(2, e.message); }
+
+    // ---- STEP 3: LightingSystem ----
+    try {
+      this._lighting = new LightingSystem(this);
+      if (this._terrain) {
+        const fp = this._terrain.getFeaturePositions();
+        this._lighting.setVoidheartPositions(fp.veins);
+        this._lighting.setPoolPositions(fp.pools);
+      }
+      addOK(3);
+    } catch(e) { addFail(3, e.message); }
+
+    // ---- STEP 4: PlayerShip ----
+    try {
+      this._ship = new PlayerShip(this, 120, H / 2, this._planeConf);
+      this._ship.setDepth(10);
+      addOK(4);
+    } catch(e) { addFail(4, e.message); }
+
+    // ---- STEP 5: EnemyManager ----
+    try {
+      this.playerBolts = this.physics.add.group({
+        classType: Projectile, maxSize: 30, runChildUpdate: true
+      });
+      this.enemyBolts = this.physics.add.group({
+        classType: Projectile, maxSize: 50, runChildUpdate: true
+      });
+      this.missiles = this.physics.add.group({
+        classType: Projectile, maxSize: 8, runChildUpdate: true
+      });
+      const groundY = Math.floor(H * 0.72);
+      this._enemyManager = new EnemyManager(
+        this, groundY, this.enemyBolts, this.missiles
+      );
+      addOK(5);
+    } catch(e) { addFail(5, e.message); }
+
+    // ---- STEP 6: _setupCollision ----
+    try {
+      if (this._enemyManager && this._ship && this.playerBolts) {
+        this._setupCollision();
+      }
+      addOK(6);
+    } catch(e) { addFail(6, e.message); }
+
+    // Game state — disable game logic; diagnostic only
+    this._elapsed      = 0;
+    this._missionTime  = 30;
+    this._gameOver     = true;
+    this._trauma       = 0;
+    this._fireCooldown = 0;
+  }
+
+  /* === ORIGINAL create() — commented out for crash diagnostic ===
   create() {
     const W = 960;
     const H = 540;
@@ -207,12 +312,15 @@ class PilotGameScene extends Phaser.Scene {
       });
     }
   }
+  === END ORIGINAL create() === */
 
   // ==========================================================
   // UPDATE
   // ==========================================================
 
   update(time, delta) {
+    // ---- DIAGNOSTIC MODE: skip all game logic ----
+    if (this._diagnosticMode) return;
     if (this._gameOver) return;
 
     this._input.update();
