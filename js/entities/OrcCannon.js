@@ -319,6 +319,9 @@ class OrcCannon extends Phaser.GameObjects.Graphics {
     this._renderStructure(ctx, glow);
     ctx.restore();
     // Bolt rendering handled by Phaser Projectile group (no manual _renderBolts call needed).
+
+    ctx.globalAlpha = 1.0;
+    renderer.currentAlpha = 1.0;
   }
 
   // ================================================================

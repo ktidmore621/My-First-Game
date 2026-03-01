@@ -529,6 +529,9 @@ class OrcSilo extends Phaser.GameObjects.Graphics {
     this._renderSteamBurst(ctx);
 
     ctx.restore();
+
+    ctx.globalAlpha = 1.0;
+    renderer.currentAlpha = 1.0;
   }
 
   // ================================================================
