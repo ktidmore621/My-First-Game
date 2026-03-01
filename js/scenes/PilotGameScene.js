@@ -75,6 +75,12 @@ class PilotGameScene extends Phaser.Scene {
   // ==========================================================
 
   create() {
+    this.add.rectangle(480, 270, 960, 540, 0x000011)
+      .setScrollFactor(0).setDepth(998);
+    this.add.text(480, 270, 'LOADING...', {
+      fontSize: '28px', fill: '#ffffff'
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(999);
+
     const W = 960;
     const H = 540;
     const initErrors = [];
